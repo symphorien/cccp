@@ -1,0 +1,15 @@
+[package]
+name = "cccp"
+version = "0.1.0"
+authors = ["Symphorien Gibol <symphorien+git@xlumurb.eu>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+anyhow = "1"
+crc64fast = "1"
+digest = "0.9"
+typenum = "1"
+generic-array = "0.14"
+structopt = "0.3"
