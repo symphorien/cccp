@@ -1,4 +1,4 @@
 with import <nixpkgs> {};
 mkShell {
-  buildInputs = [ cargo rls rustc clippy ];
+  buildInputs = [ cargo rls rustfmt rustc clippy ];
 }
