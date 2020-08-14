@@ -40,6 +40,8 @@ dependencies = [
  "crc64fast",
  "digest",
  "generic-array",
+ "libc",
+ "nc",
  "structopt",
  "typenum",
 ]
@@ -113,6 +115,12 @@ name = "libc"
 version = "0.2.74"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2f02823cf78b754822df5f7f268fb59822e7296276d3e069d8e8cb26a14bd10"
+
+[[package]]
+name = "nc"
+version = "0.4.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7e21573ce3d834506a052c0c3b7447f398492096c49a9007e91be2bde75b57fb"
 
 [[package]]
 name = "proc-macro-error"

@@ -1,8 +1,23 @@
+mod cache;
 mod checksum;
 mod copy;
+mod utils;
 
+use anyhow::Context;
+use std::io::prelude::*;
 use std::path::PathBuf;
 use structopt::StructOpt;
+
+fn corrupt(file: impl AsRef<std::path::Path>) -> anyhow::Result<()> {
+    let mut fd = std::fs::OpenOptions::new()
+        .write(true)
+        .open(file.as_ref())
+        .with_context(|| format!("opening {} for corruption", file.as_ref().display()))?;
+    fd.seek(std::io::SeekFrom::End(-32))
+        .with_context(|| format!("seeking in {} for corruption", file.as_ref().display()))?;
+    fd.write_all(b"foo")?;
+    Ok(())
+}
 
 /// A basic example
 #[derive(StructOpt, Debug)]
@@ -19,6 +34,9 @@ struct Opt {
 fn main() -> anyhow::Result<()> {
     let opt = Opt::from_args();
     let mut checksum = Some(copy::copy_file(&opt.input, &opt.output)?);
+    corrupt(&opt.output)?;
+    cache::global_drop_cache(&opt.output)?;
+    dbg!(copy::fix_file(&opt.input, &opt.output, &mut checksum)?);
     dbg!(copy::fix_file(&opt.input, &opt.output, &mut checksum)?);
     Ok(())
 }
