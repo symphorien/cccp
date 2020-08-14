@@ -18,6 +18,7 @@ struct Opt {
 
 fn main() -> anyhow::Result<()> {
     let opt = Opt::from_args();
-    copy::copy_file(opt.input, opt.output)?;
+    let mut checksum = Some(copy::copy_file(&opt.input, &opt.output)?);
+    dbg!(copy::fix_file(&opt.input, &opt.output, &mut checksum)?);
     Ok(())
 }
