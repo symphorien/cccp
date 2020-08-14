@@ -24,7 +24,10 @@ impl digest::FixedOutputDirty for Crc64Hasher {
     }
 }
 
-impl<T> From<T> for Checksum where T: digest::Digest<OutputSize=typenum::U8> {
+impl<T> From<T> for Checksum
+where
+    T: digest::Digest<OutputSize = typenum::U8>,
+{
     fn from(t: T) -> Checksum {
         Checksum(u64::from_ne_bytes(t.finalize().into()))
     }
