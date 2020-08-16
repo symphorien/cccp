@@ -32,3 +32,9 @@ where
         Checksum(u64::from_ne_bytes(t.finalize().into()))
     }
 }
+
+impl std::ops::BitXorAssign for Checksum {
+    fn bitxor_assign(&mut self, rhs: Checksum) {
+        self.0 = self.0 ^ rhs.0
+    }
+}

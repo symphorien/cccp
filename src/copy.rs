@@ -1,16 +1,18 @@
 use crate::checksum::{Checksum, Crc64Hasher};
+use crate::utils::FileKind;
 use anyhow::Context;
 use digest::Digest;
 use std::fs::File;
 use std::io::prelude::*;
 use std::io::{Read, Write};
+use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::path::Path;
 
 use anyhow::anyhow;
 
-/// Copies a file to another and computes the checksum
-pub fn copy_file(file: impl AsRef<Path>, target: impl AsRef<Path>) -> anyhow::Result<Checksum> {
+/// Copies a file to another and computes the checksum of the original file
+fn copy_file(file: impl AsRef<Path>, target: impl AsRef<Path>) -> anyhow::Result<Checksum> {
     let mut crc = Crc64Hasher::default();
     let mut orig_fd = File::open(file.as_ref())
         .with_context(|| format!("Failed to open {} for copy input", file.as_ref().display()))?;
@@ -46,29 +48,31 @@ pub fn copy_file(file: impl AsRef<Path>, target: impl AsRef<Path>) -> anyhow::Re
     Ok(crc.into())
 }
 
+/// fixes a copy of a file, and checks that the checksum is correct. Returns if the copy was
+/// modified.
 pub fn fix_file(
-    file: impl AsRef<Path>,
+    orig: impl AsRef<Path>,
     target: impl AsRef<Path>,
-    checksum: &mut Option<Checksum>,
+    checksum: Checksum,
 ) -> anyhow::Result<bool> {
     let mut changed = false;
     let mut crc = Crc64Hasher::default();
-    let mut orig_fd = File::open(file.as_ref())
-        .with_context(|| format!("Failed to open {} as fix input", file.as_ref().display()))?;
+    let mut orig_fd = File::open(orig.as_ref())
+        .with_context(|| format!("Failed to open {} as fix input", orig.as_ref().display()))?;
     let mut target_fd = std::fs::OpenOptions::new()
         .read(true)
         .write(true)
         .open(target.as_ref())
         .with_context(|| format!("Failed to open {} for fixing", target.as_ref().display()))?;
-    let mut orig = [0; 4096];
+    let mut reference = [0; 4096];
     let mut actual = [0; 4096];
     let mut offset = 0u64;
     loop {
         // invariant: both fd are at offset `offset` and identical up to there.
         let mut append = false;
         let n_orig = orig_fd
-            .read(&mut orig)
-            .with_context(|| format!("Reading from {} for comparing", file.as_ref().display()))?;
+            .read(&mut reference)
+            .with_context(|| format!("Reading from {} for comparing", orig.as_ref().display()))?;
         if n_orig == 0 {
             let n_read = target_fd.read(&mut actual[..1]).with_context(|| {
                 format!("Reading from {} for comparing", target.as_ref().display())
@@ -96,7 +100,7 @@ pub fn fix_file(
                 break;
             };
         }
-        let data = &orig[..n_orig];
+        let data = &reference[..n_orig];
         crc.update(data);
         if append || data != &actual[..n_orig] {
             if !changed {
@@ -114,13 +118,142 @@ pub fn fix_file(
         }
         offset += n_orig as u64;
     }
-    match checksum {
-        None => *checksum = Some(crc.into()),
-        Some(c) => {
-            if *c != crc.into() {
-                return Err(anyhow!("Bad checksum for file {}", file.as_ref().display()));
-            }
-        }
+    if checksum != crc.into() {
+        return Err(anyhow!("Bad checksum for file {}", orig.as_ref().display()));
     }
     Ok(changed)
+}
+
+fn copy_symlink(orig: impl AsRef<Path>, target: impl AsRef<Path>) -> anyhow::Result<()> {
+    std::os::unix::fs::symlink(orig.as_ref(), target.as_ref()).with_context(|| {
+        format!(
+            "creating a symlink from {} to {}",
+            orig.as_ref().display(),
+            target.as_ref().display()
+        )
+    })?;
+    Ok(())
+}
+
+pub fn symlink_checksum(path: impl AsRef<Path>) -> anyhow::Result<Checksum> {
+    let content = std::fs::read_link(path.as_ref())
+        .with_context(|| format!("computing checksum of symlink {}", path.as_ref().display()))?;
+    let mut hasher = Crc64Hasher::default();
+    hasher.update(content.as_os_str().as_bytes());
+    Ok(hasher.into())
+}
+
+pub fn create_directory(target: impl AsRef<Path>) -> anyhow::Result<()> {
+    match std::fs::create_dir(target.as_ref()) {
+        Ok(()) => Ok(()),
+        Err(e) => match e.kind() {
+            std::io::ErrorKind::AlreadyExists => Ok(()),
+            _ => {
+                Err(e).with_context(|| format!("creating directory {}", target.as_ref().display()))
+            }
+        },
+    }
+}
+
+fn directory_checksum(path: impl AsRef<Path>) -> anyhow::Result<Checksum> {
+    // the checksum must not depend on iteration order, so we xor the checksum of all entries
+    let hasher = Crc64Hasher::default();
+    let mut res = hasher.into();
+
+    for entry in std::fs::read_dir(path.as_ref())
+        .with_context(|| format!("computing checksum of {}", path.as_ref().display()))?
+    {
+        let entry = entry?;
+        let mut hasher = Crc64Hasher::default();
+        hasher.update(entry.file_name().as_bytes());
+        res ^= hasher.into();
+    }
+
+    Ok(res)
+}
+
+pub fn file_checksum(path: impl AsRef<Path>) -> anyhow::Result<Checksum> {
+    let mut hasher = Crc64Hasher::default();
+    let mut fd = std::fs::File::open(path.as_ref())
+        .with_context(|| format!("opening {} for checksum", path.as_ref().display()))?;
+    let mut buffer = [0; 4096];
+    loop {
+        let n_read = fd
+            .read(&mut buffer)
+            .with_context(|| format!("reading {} for checksum", path.as_ref().display()))?;
+        if n_read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..n_read]);
+    }
+    Ok(hasher.into())
+}
+
+pub fn copy_path(orig: impl AsRef<Path>, target: impl AsRef<Path>) -> anyhow::Result<Checksum> {
+    match FileKind::of(orig.as_ref())
+        .with_context(|| format!("stat({}) to copy", orig.as_ref().display()))?
+    {
+        FileKind::Regular | FileKind::Device => copy_file(orig.as_ref(), target.as_ref()),
+        FileKind::Directory => {
+            create_directory(target.as_ref())?;
+            directory_checksum(target.as_ref())
+        }
+        FileKind::Symlink => {
+            copy_symlink(orig.as_ref(), target.as_ref())?;
+            symlink_checksum(target.as_ref())
+        }
+        FileKind::Other => Err(anyhow!(
+            "cannot copy unknown fs path type {}",
+            orig.as_ref().display()
+        )),
+    }
+}
+
+pub fn checksum_path(path: impl AsRef<Path>) -> anyhow::Result<Checksum> {
+    match FileKind::of(path.as_ref())
+        .with_context(|| format!("stat({}) to copy", path.as_ref().display()))?
+    {
+        FileKind::Regular | FileKind::Device => file_checksum(path.as_ref()),
+        FileKind::Directory => directory_checksum(path.as_ref()),
+        FileKind::Symlink => symlink_checksum(path.as_ref()),
+        FileKind::Other => Err(anyhow!(
+            "cannot checksum unknown fs path type {}",
+            path.as_ref().display()
+        )),
+    }
+}
+
+pub fn fix_path(
+    orig: impl AsRef<Path>,
+    target: impl AsRef<Path>,
+    checksum: Checksum,
+) -> anyhow::Result<bool> {
+    match FileKind::of(orig.as_ref())
+        .with_context(|| format!("stat({}) to fix", orig.as_ref().display()))?
+    {
+        FileKind::Regular | FileKind::Device => fix_file(orig.as_ref(), target.as_ref(), checksum),
+        FileKind::Directory | FileKind::Symlink => {
+            let c2 = checksum_path(target.as_ref())?;
+            if c2 != checksum {
+                // needs fixing
+                let c3 = copy_path(orig.as_ref(), target.as_ref()).with_context(|| {
+                    format!(
+                        "copy symlink or directory {} to fix",
+                        orig.as_ref().display()
+                    )
+                })?;
+                if c3 != checksum {
+                    Err(anyhow!("wrong checksum for {}", orig.as_ref().display()))
+                } else {
+                    Ok(true)
+                }
+            } else {
+                Ok(false)
+            }
+        }
+        FileKind::Other => Err(anyhow!(
+            "cannot checksum unknown fs path type {}",
+            orig.as_ref().display()
+        )),
+    }
 }

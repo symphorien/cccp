@@ -33,10 +33,10 @@ struct Opt {
 
 fn main() -> anyhow::Result<()> {
     let opt = Opt::from_args();
-    let mut checksum = Some(copy::copy_file(&opt.input, &opt.output)?);
+    let checksum = copy::copy_path(&opt.input, &opt.output)?;
     corrupt(&opt.output)?;
     cache::global_drop_cache(&opt.output)?;
-    dbg!(copy::fix_file(&opt.input, &opt.output, &mut checksum)?);
-    dbg!(copy::fix_file(&opt.input, &opt.output, &mut checksum)?);
+    dbg!(copy::fix_path(&opt.input, &opt.output, checksum)?);
+    dbg!(copy::fix_path(&opt.input, &opt.output, checksum)?);
     Ok(())
 }
