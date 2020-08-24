@@ -2,7 +2,6 @@ use crate::utils::FileKind;
 use anyhow::anyhow;
 use anyhow::Context;
 use std::io::prelude::*;
-use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::io::{FromRawFd, IntoRawFd};
 use std::path::Path;
 
@@ -20,20 +19,13 @@ pub fn global_drop_cache(file: impl AsRef<Path>) -> anyhow::Result<()> {
     match FileKind::of(file.as_ref())
         .with_context(|| format!("stat {} to drop cache", file.as_ref().display()))?
     {
-        FileKind::Regular => {
-            let f = std::fs::File::open(file.as_ref())
-                .with_context(|| format!("open {} to drop cache", file.as_ref().display()))?;
-            syncfs(f)
-                .with_context(|| format!("syncfs({}) to drop cache", file.as_ref().display()))?;
-        }
-        FileKind::Directory | FileKind::Symlink => {
+        FileKind::Directory | FileKind::Symlink | FileKind::Regular => {
             let f = std::fs::OpenOptions::new()
                 .read(true)
-                .custom_flags(libc::O_PATH)
                 .open(file.as_ref())
                 .with_context(|| {
                     format!(
-                        "open({}, O_PATH) for sync to drop cache",
+                        "open({}) for sync to drop cache",
                         file.as_ref().display()
                     )
                 })?;
