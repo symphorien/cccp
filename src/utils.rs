@@ -2,6 +2,7 @@ use anyhow::Context;
 use std::os::unix::fs::FileTypeExt;
 use std::path::{Path, PathBuf};
 
+#[derive(PartialEq, Eq, Debug, Clone, Copy)]
 pub enum FileKind {
     Regular,
     Directory,
@@ -11,11 +12,9 @@ pub enum FileKind {
 }
 
 impl FileKind {
-    pub fn of(file: impl AsRef<Path>) -> anyhow::Result<FileKind> {
-        let meta = std::fs::metadata(file.as_ref())
-            .with_context(|| format!("stat {} to determine file type", file.as_ref().display()))?;
-        let t = meta.file_type();
-        Ok(if t.is_file() {
+    pub fn of_metadata(metadata: std::fs::Metadata) -> FileKind {
+        let t = metadata.file_type();
+        if t.is_file() {
             FileKind::Regular
         } else if t.is_dir() {
             FileKind::Directory
@@ -25,7 +24,20 @@ impl FileKind {
             FileKind::Device
         } else {
             FileKind::Other
-        })
+        }
+    }
+
+    pub fn of_path(path: impl AsRef<Path>) -> anyhow::Result<FileKind> {
+        let meta = std::fs::metadata(path.as_ref())
+            .with_context(|| format!("stat {} to determine file type", path.as_ref().display()))?;
+        Ok(Self::of_metadata(meta))
+    }
+
+    pub fn of_file(file: &std::fs::File) -> anyhow::Result<FileKind> {
+        let meta = file
+            .metadata()
+            .with_context(|| format!("stat of open file {:?} to determine file type", file))?;
+        Ok(Self::of_metadata(meta))
     }
 }
 

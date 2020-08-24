@@ -58,7 +58,8 @@ fn first_copy(
             }
             checksum
         } else {
-            copy::copy_path(&source, &dest).with_context(|| format!("copying {} to {}", source.display(), dest.display()))?
+            copy::copy_path(&source, &dest)
+                .with_context(|| format!("copying {} to {}", source.display(), dest.display()))?
         };
         res.insert(Obligation {
             source,

@@ -74,15 +74,18 @@ fn fix_file(
             .read(&mut reference)
             .with_context(|| format!("Reading from {} for comparing", orig.as_ref().display()))?;
         if n_orig == 0 {
-            let n_read = target_fd.read(&mut actual[..1]).with_context(|| {
-                format!("Reading from {} for comparing", target.as_ref().display())
-            })?;
-            if n_read != 0 {
-                // target file is longer
-                target_fd
-                    .set_len(offset)
-                    .with_context(|| format!("Truncating {}", target.as_ref().display()))?;
-                changed = true;
+            let is_block_device = FileKind::of_file(&target_fd)? == FileKind::Device;
+            if !is_block_device {
+                let n_read = target_fd.read(&mut actual[..1]).with_context(|| {
+                    format!("Reading from {} for comparing", target.as_ref().display())
+                })?;
+                if n_read != 0 {
+                    // target file is longer
+                    target_fd
+                        .set_len(offset)
+                        .with_context(|| format!("Truncating {}", target.as_ref().display()))?;
+                    changed = true;
+                }
             }
             break;
         }
@@ -191,7 +194,7 @@ fn file_checksum(path: impl AsRef<Path>) -> anyhow::Result<Checksum> {
 
 /// Copies a file or directory or symlink `orig` to `target` and returns `orig`'s checksum
 pub fn copy_path(orig: impl AsRef<Path>, target: impl AsRef<Path>) -> anyhow::Result<Checksum> {
-    match FileKind::of(orig.as_ref())
+    match FileKind::of_path(orig.as_ref())
         .with_context(|| format!("stat({}) to copy", orig.as_ref().display()))?
     {
         FileKind::Regular | FileKind::Device => copy_file(orig.as_ref(), target.as_ref()),
@@ -210,14 +213,19 @@ pub fn copy_path(orig: impl AsRef<Path>, target: impl AsRef<Path>) -> anyhow::Re
     }
 }
 
-/// Returns the checksum of a path
+/// Returns the checksum of a path, except a device file, because the length to checksum
+/// is not known in advance for device files.
 pub fn checksum_path(path: impl AsRef<Path>) -> anyhow::Result<Checksum> {
-    match FileKind::of(path.as_ref())
+    match FileKind::of_path(path.as_ref())
         .with_context(|| format!("stat({}) to copy", path.as_ref().display()))?
     {
-        FileKind::Regular | FileKind::Device => file_checksum(path.as_ref()),
+        FileKind::Regular => file_checksum(path.as_ref()),
         FileKind::Directory => directory_checksum(path.as_ref()),
         FileKind::Symlink => symlink_checksum(path.as_ref()),
+        FileKind::Device => Err(anyhow!(
+            "cannot checksum device file {}",
+            path.as_ref().display()
+        )),
         FileKind::Other => Err(anyhow!(
             "cannot checksum unknown fs path type {}",
             path.as_ref().display()
@@ -233,7 +241,7 @@ pub fn fix_path(
     target: impl AsRef<Path>,
     checksum: Checksum,
 ) -> anyhow::Result<bool> {
-    match FileKind::of(orig.as_ref())
+    match FileKind::of_path(orig.as_ref())
         .with_context(|| format!("stat({}) to fix", orig.as_ref().display()))?
     {
         FileKind::Regular | FileKind::Device => fix_file(orig.as_ref(), target.as_ref(), checksum),

@@ -16,7 +16,7 @@ fn syncfs<T: IntoRawFd + FromRawFd>(f: T) -> anyhow::Result<()> {
 
 pub fn global_drop_cache(file: impl AsRef<Path>) -> anyhow::Result<()> {
     // first sync
-    match FileKind::of(file.as_ref())
+    match FileKind::of_path(file.as_ref())
         .with_context(|| format!("stat {} to drop cache", file.as_ref().display()))?
     {
         FileKind::Directory | FileKind::Symlink | FileKind::Regular => {
