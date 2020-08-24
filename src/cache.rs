@@ -24,10 +24,7 @@ pub fn global_drop_cache(file: impl AsRef<Path>) -> anyhow::Result<()> {
                 .read(true)
                 .open(file.as_ref())
                 .with_context(|| {
-                    format!(
-                        "open({}) for sync to drop cache",
-                        file.as_ref().display()
-                    )
+                    format!("open({}) for sync to drop cache", file.as_ref().display())
                 })?;
             syncfs(f)
                 .with_context(|| format!("syncfs({}) to drop cache", file.as_ref().display()))?;

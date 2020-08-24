@@ -43,7 +43,11 @@ fn change_prefix(path: impl AsRef<Path>, old_prefix_len: usize, new_prefix: &Pat
 }
 
 /// Replaces in place the prefix `old_prefix` of all paths in `paths` by `new_prefix`.
-pub fn change_prefixes<T: AsRef<Path>>(old_prefix: impl AsRef<Path>, new_prefix: &PathBuf, paths: &[T]) -> Vec<PathBuf> {
+pub fn change_prefixes<T: AsRef<Path>>(
+    old_prefix: impl AsRef<Path>,
+    new_prefix: &PathBuf,
+    paths: &[T],
+) -> Vec<PathBuf> {
     let old_prefix_len = old_prefix.as_ref().components().count();
 
     #[cfg(any(test, debug))]
@@ -53,7 +57,10 @@ pub fn change_prefixes<T: AsRef<Path>>(old_prefix: impl AsRef<Path>, new_prefix:
     for path in paths {
         #[cfg(any(test, debug))]
         {
-            assert_eq!(c, dbg!(path.as_ref().components().take(c.len()).collect::<Vec<_>>()));
+            assert_eq!(
+                c,
+                dbg!(path.as_ref().components().take(c.len()).collect::<Vec<_>>())
+            );
         }
         let new = change_prefix(path.as_ref(), old_prefix_len, new_prefix);
         res.push(new);
