@@ -1,15 +1,15 @@
 use crate::checksum::{Checksum, Crc64Hasher};
 use crate::utils::FileKind;
+use anyhow::anyhow;
 use anyhow::Context;
 use digest::Digest;
+use std::collections::HashSet;
 use std::fs::File;
 use std::io::prelude::*;
 use std::io::{Read, Write};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::path::Path;
-
-use anyhow::anyhow;
 
 /// Copies a file to another and computes the checksum of the original file
 fn copy_file(file: impl AsRef<Path>, target: impl AsRef<Path>) -> anyhow::Result<Checksum> {
@@ -175,6 +175,86 @@ fn directory_checksum(path: impl AsRef<Path>) -> anyhow::Result<Checksum> {
     Ok(res)
 }
 
+fn fix_directory(
+    orig: impl AsRef<Path>,
+    target: impl AsRef<Path>,
+    checksum: Checksum,
+) -> anyhow::Result<bool> {
+    // the checksum must not depend on iteration order, so we xor the checksum of all entries
+    let hasher = Crc64Hasher::default();
+    let mut res: Checksum = hasher.into();
+
+    let mut orig_names = HashSet::new();
+    let mut target_names = HashSet::new();
+
+    let it_orig = std::fs::read_dir(orig.as_ref()).with_context(|| {
+        format!(
+            "reading directory for comparison {}",
+            orig.as_ref().display()
+        )
+    })?;
+    let mut it_target = std::fs::read_dir(target.as_ref())
+        .with_context(|| format!("reading directory for fixing {}", target.as_ref().display()))?;
+
+    for entry in it_orig {
+        let entry = entry?;
+        let mut hasher = Crc64Hasher::default();
+        let name = entry.file_name();
+        let bytes = name.as_bytes();
+        hasher.update(bytes);
+        res ^= hasher.into();
+        match it_target.next() {
+            Some(Err(e)) => Err(e)?,
+            None => {
+                orig_names.insert(name.to_owned());
+            }
+            Some(Ok(entry2)) => {
+                let name2 = entry2.file_name();
+                if name2 != name {
+                    target_names.insert(name2.to_owned());
+                    orig_names.insert(name.to_owned());
+                }
+            }
+        }
+    }
+
+    // check the checksum
+    if res != checksum {
+        return Err(anyhow!(
+            "Bad checksum for directory {}",
+            orig.as_ref().display()
+        ));
+    }
+
+    // consume remaining dentries
+    for entry2 in it_target {
+        let entry2 = entry2?;
+        target_names.insert(entry2.file_name().to_owned());
+    }
+
+    // files to be removed
+    let extra = target_names.difference(&orig_names);
+    let mut path = target.as_ref().to_path_buf();
+    let mut changed = false;
+    for name in extra {
+        changed = true;
+        path.push(name);
+        match FileKind::of_path(&path).with_context(|| {
+            format!(
+                "stating extra directory member {} for removal",
+                path.display()
+            )
+        })? {
+            FileKind::Directory => std::fs::remove_dir_all(&path),
+            _ => std::fs::remove_file(&path),
+        }
+        .with_context(|| format!("removing extra directory member {}", path.display()))?;
+        path.pop();
+    }
+
+    Ok(changed)
+}
+
 fn file_checksum(path: impl AsRef<Path>) -> anyhow::Result<Checksum> {
     let mut hasher = Crc64Hasher::default();
     let mut fd = std::fs::File::open(path.as_ref())
@@ -245,16 +325,13 @@ pub fn fix_path(
         .with_context(|| format!("stat({}) to fix", orig.as_ref().display()))?
     {
         FileKind::Regular | FileKind::Device => fix_file(orig.as_ref(), target.as_ref(), checksum),
-        FileKind::Directory | FileKind::Symlink => {
+        FileKind::Directory => fix_directory(orig.as_ref(), target.as_ref(), checksum),
+        FileKind::Symlink => {
             let c2 = checksum_path(target.as_ref())?;
             if c2 != checksum {
                 // needs fixing
-                let c3 = copy_path(orig.as_ref(), target.as_ref()).with_context(|| {
-                    format!(
-                        "copy symlink or directory {} to fix",
-                        orig.as_ref().display()
-                    )
-                })?;
+                let c3 = copy_path(orig.as_ref(), target.as_ref())
+                    .with_context(|| format!("copy symlink {} to fix", orig.as_ref().display()))?;
                 if c3 != checksum {
                     Err(anyhow!("wrong checksum for {}", orig.as_ref().display()))
                 } else {

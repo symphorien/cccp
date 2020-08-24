@@ -6,7 +6,6 @@ mod utils;
 use anyhow::Context;
 use checksum::Checksum;
 use std::collections::HashSet;
-use std::io::prelude::*;
 use std::path::{Path, PathBuf};
 use structopt::StructOpt;
 
