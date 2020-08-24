@@ -39,7 +39,26 @@ fn first_copy(
     let mut new_paths = utils::change_prefixes(orig, target, &orig_paths);
     let mut res = HashSet::new();
     for (dest, source) in new_paths.drain(..).zip(orig_paths) {
-        let checksum = copy::copy_path(&source, &dest)?;
+        let checksum = if utils::exists(&dest)
+            .with_context(|| format!("checking if a copy {} already exists", dest.display()))?
+        {
+            let checksum = copy::checksum_path(&source).with_context(|| {
+                format!("computing checksum of reference file {}", source.display())
+            })?;
+            let changed = copy::fix_path(&source, &dest, checksum).with_context(|| {
+                format!(
+                    "fixing existing copy {} of {}",
+                    dest.display(),
+                    source.display()
+                )
+            })?;
+            if !changed {
+                continue;
+            }
+            checksum
+        } else {
+            copy::copy_path(&source, &dest).with_context(|| format!("copying {} to {}", source.display(), dest.display()))?
+        };
         res.insert(Obligation {
             source,
             dest,

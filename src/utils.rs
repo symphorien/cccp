@@ -29,6 +29,16 @@ impl FileKind {
     }
 }
 
+pub fn exists(path: impl AsRef<Path>) -> anyhow::Result<bool> {
+    match std::fs::metadata(path.as_ref()) {
+        Ok(_) => Ok(true),
+        Err(e) => match e.kind() {
+            std::io::ErrorKind::NotFound => Ok(false),
+            _ => Err(e).with_context(|| format!("stat({})", path.as_ref().display()))?,
+        },
+    }
+}
+
 fn change_prefix(path: impl AsRef<Path>, old_prefix_len: usize, new_prefix: &PathBuf) -> PathBuf {
     let mut res = new_prefix.clone();
     let mut c = path.as_ref().components();

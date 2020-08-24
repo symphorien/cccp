@@ -135,7 +135,7 @@ fn copy_symlink(orig: impl AsRef<Path>, target: impl AsRef<Path>) -> anyhow::Res
     Ok(())
 }
 
-pub fn symlink_checksum(path: impl AsRef<Path>) -> anyhow::Result<Checksum> {
+fn symlink_checksum(path: impl AsRef<Path>) -> anyhow::Result<Checksum> {
     let content = std::fs::read_link(path.as_ref())
         .with_context(|| format!("computing checksum of symlink {}", path.as_ref().display()))?;
     let mut hasher = Crc64Hasher::default();
@@ -143,7 +143,7 @@ pub fn symlink_checksum(path: impl AsRef<Path>) -> anyhow::Result<Checksum> {
     Ok(hasher.into())
 }
 
-pub fn create_directory(target: impl AsRef<Path>) -> anyhow::Result<()> {
+fn create_directory(target: impl AsRef<Path>) -> anyhow::Result<()> {
     match std::fs::create_dir(target.as_ref()) {
         Ok(()) => Ok(()),
         Err(e) => match e.kind() {
@@ -172,7 +172,7 @@ fn directory_checksum(path: impl AsRef<Path>) -> anyhow::Result<Checksum> {
     Ok(res)
 }
 
-pub fn file_checksum(path: impl AsRef<Path>) -> anyhow::Result<Checksum> {
+fn file_checksum(path: impl AsRef<Path>) -> anyhow::Result<Checksum> {
     let mut hasher = Crc64Hasher::default();
     let mut fd = std::fs::File::open(path.as_ref())
         .with_context(|| format!("opening {} for checksum", path.as_ref().display()))?;
