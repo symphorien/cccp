@@ -10,17 +10,6 @@ use std::io::prelude::*;
 use std::path::{Path, PathBuf};
 use structopt::StructOpt;
 
-fn corrupt(file: impl AsRef<std::path::Path>) -> anyhow::Result<()> {
-    let mut fd = std::fs::OpenOptions::new()
-        .write(true)
-        .open(file.as_ref())
-        .with_context(|| format!("opening {} for corruption", file.as_ref().display()))?;
-    fd.seek(std::io::SeekFrom::End(-32))
-        .with_context(|| format!("seeking in {} for corruption", file.as_ref().display()))?;
-    fd.write_all(b"foo")?;
-    Ok(())
-}
-
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
 struct Obligation<T: AsRef<Path> + std::hash::Hash + Eq> {
     source: T,
