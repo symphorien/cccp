@@ -35,16 +35,13 @@ fn first_copy(
             let checksum = copy::checksum_path(&source).with_context(|| {
                 format!("computing checksum of reference file {}", source.display())
             })?;
-            let changed = copy::fix_path(&source, &dest, checksum).with_context(|| {
+            let _changed = copy::fix_path(&source, &dest, checksum).with_context(|| {
                 format!(
                     "fixing existing copy {} of {}",
                     dest.display(),
                     source.display()
                 )
             })?;
-            if !changed {
-                continue;
-            }
             checksum
         } else {
             copy::copy_path(&source, &dest)
