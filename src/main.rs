@@ -27,6 +27,7 @@ struct Obligation<T: AsRef<Path> + std::hash::Hash + Eq> {
     dest: PathBuf,
     checksum: Checksum,
 }
+
 fn first_copy(
     orig: impl AsRef<Path>,
     target: &PathBuf,
@@ -68,11 +69,10 @@ fn first_copy(
     Ok(res)
 }
 
-/// A basic example
 #[derive(StructOpt, Debug)]
 #[structopt(name = "basic")]
 struct Opt {
-    /// File or directoty to copy
+    /// File or directory to copy
     #[structopt(name = "SOURCE", parse(from_os_str))]
     input: PathBuf,
     /// Destination. Can a a block device if SOURCE is a regular file.

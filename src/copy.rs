@@ -189,6 +189,7 @@ fn file_checksum(path: impl AsRef<Path>) -> anyhow::Result<Checksum> {
     Ok(hasher.into())
 }
 
+/// Copies a file or directory or symlink `orig` to `target` and returns `orig`'s checksum
 pub fn copy_path(orig: impl AsRef<Path>, target: impl AsRef<Path>) -> anyhow::Result<Checksum> {
     match FileKind::of(orig.as_ref())
         .with_context(|| format!("stat({}) to copy", orig.as_ref().display()))?
@@ -196,11 +197,11 @@ pub fn copy_path(orig: impl AsRef<Path>, target: impl AsRef<Path>) -> anyhow::Re
         FileKind::Regular | FileKind::Device => copy_file(orig.as_ref(), target.as_ref()),
         FileKind::Directory => {
             create_directory(target.as_ref())?;
-            directory_checksum(target.as_ref())
+            directory_checksum(orig.as_ref())
         }
         FileKind::Symlink => {
             copy_symlink(orig.as_ref(), target.as_ref())?;
-            symlink_checksum(target.as_ref())
+            symlink_checksum(orig.as_ref())
         }
         FileKind::Other => Err(anyhow!(
             "cannot copy unknown fs path type {}",
@@ -209,6 +210,7 @@ pub fn copy_path(orig: impl AsRef<Path>, target: impl AsRef<Path>) -> anyhow::Re
     }
 }
 
+/// Returns the checksum of a path
 pub fn checksum_path(path: impl AsRef<Path>) -> anyhow::Result<Checksum> {
     match FileKind::of(path.as_ref())
         .with_context(|| format!("stat({}) to copy", path.as_ref().display()))?
@@ -225,6 +227,7 @@ pub fn checksum_path(path: impl AsRef<Path>) -> anyhow::Result<Checksum> {
 
 /// Fixes the copy `target` of `orig` which has checksum `checksum`.
 /// Returns `true` if some fixing was needed or `false` otherwise.
+/// Returns an error if `orig` has changed since it has been checksummed
 pub fn fix_path(
     orig: impl AsRef<Path>,
     target: impl AsRef<Path>,
