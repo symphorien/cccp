@@ -50,7 +50,7 @@ fn copy_file(file: impl AsRef<Path>, target: impl AsRef<Path>) -> anyhow::Result
 
 /// fixes a copy of a file, and checks that the checksum is correct. Returns if the copy was
 /// modified.
-pub fn fix_file(
+fn fix_file(
     orig: impl AsRef<Path>,
     target: impl AsRef<Path>,
     checksum: Checksum,
@@ -223,6 +223,8 @@ pub fn checksum_path(path: impl AsRef<Path>) -> anyhow::Result<Checksum> {
     }
 }
 
+/// Fixes the copy `target` of `orig` which has checksum `checksum`.
+/// Returns `true` if some fixing was needed or `false` otherwise.
 pub fn fix_path(
     orig: impl AsRef<Path>,
     target: impl AsRef<Path>,

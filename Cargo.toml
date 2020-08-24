@@ -16,3 +16,4 @@ structopt = "0.3"
 # the addition of prctl requires rustc 1.43
 nc = "0.4,<0.4.11"
 libc="0.2"
+walkdir="2"

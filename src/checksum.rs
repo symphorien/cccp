@@ -1,4 +1,4 @@
-#[derive(PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
 pub struct Checksum(u64);
 
 #[derive(Clone, Default)]
