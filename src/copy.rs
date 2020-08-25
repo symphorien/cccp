@@ -1,4 +1,4 @@
-use crate::checksum::{Checksum, Crc64Hasher};
+use crate::checksum::{fill_checksum, Checksum, Crc64Hasher};
 use crate::utils::FileKind;
 use anyhow::anyhow;
 use anyhow::Context;
@@ -53,7 +53,7 @@ fn copy_file(file: impl AsRef<Path>, target: impl AsRef<Path>) -> anyhow::Result
 fn fix_file(
     orig: impl AsRef<Path>,
     target: impl AsRef<Path>,
-    checksum: Checksum,
+    checksum: &mut Option<Checksum>,
 ) -> anyhow::Result<bool> {
     let mut changed = false;
     let mut crc = Crc64Hasher::default();
@@ -121,9 +121,8 @@ fn fix_file(
         }
         offset += n_orig as u64;
     }
-    if checksum != crc.into() {
-        return Err(anyhow!("Bad checksum for file {}", orig.as_ref().display()));
-    }
+    fill_checksum(checksum, crc.into())
+        .with_context(|| format!("Bad checksum for file {}", orig.as_ref().display()))?;
     Ok(changed)
 }
 
@@ -178,7 +177,7 @@ fn directory_checksum(path: impl AsRef<Path>) -> anyhow::Result<Checksum> {
 fn fix_directory(
     orig: impl AsRef<Path>,
     target: impl AsRef<Path>,
-    checksum: Checksum,
+    checksum: &mut Option<Checksum>,
 ) -> anyhow::Result<bool> {
     // the checksum must not depend on iteration order, so we xor the checksum of all entries
     let hasher = Crc64Hasher::default();
@@ -219,12 +218,8 @@ fn fix_directory(
     }
 
     // check the checksum
-    if res != checksum {
-        return Err(anyhow!(
-            "Bad checksum for directory {}",
-            orig.as_ref().display()
-        ));
-    }
+    fill_checksum(checksum, res)
+        .with_context(|| format!("Bad checksum for directory {}", orig.as_ref().display()))?;
 
     // consume remaining dentries
     for entry2 in it_target {
@@ -272,6 +267,27 @@ fn file_checksum(path: impl AsRef<Path>) -> anyhow::Result<Checksum> {
     Ok(hasher.into())
 }
 
+fn fix_symlink(
+    orig: impl AsRef<Path>,
+    target: impl AsRef<Path>,
+    checksum: &mut Option<Checksum>,
+) -> anyhow::Result<bool> {
+    let c1 = checksum_path(orig.as_ref())?;
+    fill_checksum(checksum, c1)
+        .with_context(|| format!("fixing the copy of {}", orig.as_ref().display()))?;
+    let c2 = checksum_path(target.as_ref())?;
+    if c2 != c1 {
+        // needs fixing
+        let c3 = copy_path(orig.as_ref(), target.as_ref())
+            .with_context(|| format!("copy symlink {} to fix", orig.as_ref().display()))?;
+        fill_checksum(checksum, c3)
+            .with_context(|| format!("fixing the copy of {}", orig.as_ref().display()))?;
+        Ok(true)
+    } else {
+        Ok(false)
+    }
+}
+
 /// Copies a file or directory or symlink `orig` to `target` and returns `orig`'s checksum
 pub fn copy_path(orig: impl AsRef<Path>, target: impl AsRef<Path>) -> anyhow::Result<Checksum> {
     match FileKind::of_path(orig.as_ref())
@@ -316,33 +332,20 @@ pub fn checksum_path(path: impl AsRef<Path>) -> anyhow::Result<Checksum> {
 /// Fixes the copy `target` of `orig` which has checksum `checksum`.
 /// Returns `true` if some fixing was needed or `false` otherwise.
 /// Returns an error if `orig` has changed since it has been checksummed
+/// Sets checksum to `Some` if it was `None`.
 pub fn fix_path(
     orig: impl AsRef<Path>,
     target: impl AsRef<Path>,
-    checksum: Checksum,
+    checksum: &mut Option<Checksum>,
 ) -> anyhow::Result<bool> {
     match FileKind::of_path(orig.as_ref())
         .with_context(|| format!("stat({}) to fix", orig.as_ref().display()))?
     {
         FileKind::Regular | FileKind::Device => fix_file(orig.as_ref(), target.as_ref(), checksum),
         FileKind::Directory => fix_directory(orig.as_ref(), target.as_ref(), checksum),
-        FileKind::Symlink => {
-            let c2 = checksum_path(target.as_ref())?;
-            if c2 != checksum {
-                // needs fixing
-                let c3 = copy_path(orig.as_ref(), target.as_ref())
-                    .with_context(|| format!("copy symlink {} to fix", orig.as_ref().display()))?;
-                if c3 != checksum {
-                    Err(anyhow!("wrong checksum for {}", orig.as_ref().display()))
-                } else {
-                    Ok(true)
-                }
-            } else {
-                Ok(false)
-            }
-        }
+        FileKind::Symlink => fix_symlink(orig.as_ref(), target.as_ref(), checksum),
         FileKind::Other => Err(anyhow!(
-            "cannot checksum unknown fs path type {}",
+            "cannot fix unknown fs path type {}",
             orig.as_ref().display()
         )),
     }

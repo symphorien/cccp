@@ -1,6 +1,17 @@
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
 pub struct Checksum(u64);
 
+/// Sets `to_fill` to `Some(value)` and returns an error if `to_fill` is `Some(v2)` where
+/// `v2 != value`
+pub fn fill_checksum(to_fill: &mut Option<Checksum>, value: Checksum) -> anyhow::Result<()> {
+    match *to_fill {
+        Some(v) if v != value => anyhow::bail!("wrong checksum"),
+        _ => (),
+    }
+    *to_fill = Some(value);
+    Ok(())
+}
+
 #[derive(Clone, Default)]
 pub struct Crc64Hasher(crc64fast::Digest);
 

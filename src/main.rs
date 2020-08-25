@@ -31,17 +31,15 @@ fn first_copy(
         let checksum = if utils::exists(&dest)
             .with_context(|| format!("checking if a copy {} already exists", dest.display()))?
         {
-            let checksum = copy::checksum_path(&source).with_context(|| {
-                format!("computing checksum of reference file {}", source.display())
-            })?;
-            let _changed = copy::fix_path(&source, &dest, checksum).with_context(|| {
+            let mut checksum = None;
+            let _changed = copy::fix_path(&source, &dest, &mut checksum).with_context(|| {
                 format!(
                     "fixing existing copy {} of {}",
                     dest.display(),
                     source.display()
                 )
             })?;
-            checksum
+            checksum.unwrap()
         } else {
             copy::copy_path(&source, &dest)
                 .with_context(|| format!("copying {} to {}", source.display(), dest.display()))?
@@ -73,7 +71,8 @@ fn main() -> anyhow::Result<()> {
     while !obligations.is_empty() {
         cache::global_drop_cache(&opt.output)?;
         obligations.retain(|obligation| {
-            let res = copy::fix_path(&obligation.source, &obligation.dest, obligation.checksum)
+            let mut checksum = Some(obligation.checksum);
+            let res = copy::fix_path(&obligation.source, &obligation.dest, &mut checksum)
                 .context("while fixing copy")
                 .unwrap();
             if res {
