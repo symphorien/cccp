@@ -43,9 +43,12 @@ pub fn global_drop_cache(file: impl AsRef<Path>) -> anyhow::Result<()> {
         }
     }
     // second drop cache
-    let mut f = std::fs::File::create(VM_DROP_CACHES)
-        .with_context(|| format!("open {} to drop cache", VM_DROP_CACHES))?;
-    f.write_all(b"3")
-        .with_context(|| format!("write 3 to {} to drop cache", VM_DROP_CACHES))?;
+    // tests need to skip this test, with an environment variable
+    if std::env::var("CCCP_NO_ROOT").is_err() {
+        let mut f = std::fs::File::create(VM_DROP_CACHES)
+            .with_context(|| format!("open {} to drop cache", VM_DROP_CACHES))?;
+        f.write_all(b"3")
+            .with_context(|| format!("write 3 to {} to drop cache", VM_DROP_CACHES))?;
+    }
     Ok(())
 }

@@ -28,7 +28,7 @@ impl FileKind {
     }
 
     pub fn of_path(path: impl AsRef<Path>) -> anyhow::Result<FileKind> {
-        let meta = std::fs::metadata(path.as_ref())
+        let meta = std::fs::symlink_metadata(path.as_ref())
             .with_context(|| format!("stat {} to determine file type", path.as_ref().display()))?;
         Ok(Self::of_metadata(meta))
     }
@@ -41,12 +41,18 @@ impl FileKind {
     }
 }
 
+/// Returns without this file exists, without following metadata
 pub fn exists(path: impl AsRef<Path>) -> anyhow::Result<bool> {
-    match std::fs::metadata(path.as_ref()) {
+    match std::fs::symlink_metadata(path.as_ref()) {
         Ok(_) => Ok(true),
         Err(e) => match e.kind() {
             std::io::ErrorKind::NotFound => Ok(false),
-            _ => Err(e).with_context(|| format!("stat({})", path.as_ref().display()))?,
+            _ => Err(e).with_context(|| {
+                format!(
+                    "stat({}) to determine if it exists",
+                    path.as_ref().display()
+                )
+            })?,
         },
     }
 }

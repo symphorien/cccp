@@ -126,15 +126,26 @@ fn fix_file(
     Ok(changed)
 }
 
-fn copy_symlink(orig: impl AsRef<Path>, target: impl AsRef<Path>) -> anyhow::Result<()> {
-    std::os::unix::fs::symlink(orig.as_ref(), target.as_ref()).with_context(|| {
+fn copy_symlink(orig: impl AsRef<Path>, target: impl AsRef<Path>) -> anyhow::Result<Checksum> {
+    match std::fs::remove_file(target.as_ref()) {
+        Ok(()) => (),
+        Err(e) => match e.kind() {
+            std::io::ErrorKind::NotFound => (),
+            _ => Err(e)?,
+        },
+    }
+    let content = std::fs::read_link(orig.as_ref())
+        .with_context(|| format!("reading symlink {} for copy", orig.as_ref().display()))?;
+    let mut hasher = Crc64Hasher::default();
+    hasher.update(content.as_os_str().as_bytes());
+    std::os::unix::fs::symlink(content.as_os_str(), target.as_ref()).with_context(|| {
         format!(
             "creating a symlink from {} to {}",
             orig.as_ref().display(),
             target.as_ref().display()
         )
     })?;
-    Ok(())
+    Ok(hasher.into())
 }
 
 fn symlink_checksum(path: impl AsRef<Path>) -> anyhow::Result<Checksum> {
@@ -272,16 +283,14 @@ fn fix_symlink(
     target: impl AsRef<Path>,
     checksum: &mut Option<Checksum>,
 ) -> anyhow::Result<bool> {
-    let c1 = checksum_path(orig.as_ref())?;
+    let c1 = symlink_checksum(orig.as_ref())?;
     fill_checksum(checksum, c1)
         .with_context(|| format!("fixing the copy of {}", orig.as_ref().display()))?;
-    let c2 = checksum_path(target.as_ref())?;
+    let c2 = symlink_checksum(target.as_ref())?;
     if c2 != c1 {
         // needs fixing
-        let c3 = copy_path(orig.as_ref(), target.as_ref())
+        copy_symlink(orig.as_ref(), target.as_ref())
             .with_context(|| format!("copy symlink {} to fix", orig.as_ref().display()))?;
-        fill_checksum(checksum, c3)
-            .with_context(|| format!("fixing the copy of {}", orig.as_ref().display()))?;
         Ok(true)
     } else {
         Ok(false)
@@ -311,6 +320,7 @@ pub fn copy_path(orig: impl AsRef<Path>, target: impl AsRef<Path>) -> anyhow::Re
 
 /// Returns the checksum of a path, except a device file, because the length to checksum
 /// is not known in advance for device files.
+#[allow(unused)]
 pub fn checksum_path(path: impl AsRef<Path>) -> anyhow::Result<Checksum> {
     match FileKind::of_path(path.as_ref())
         .with_context(|| format!("stat({}) to copy", path.as_ref().display()))?
