@@ -80,6 +80,9 @@ fn main() -> anyhow::Result<()> {
             }
             res
         });
+        // if !obligations.is_empty() {
+        //     anyhow::bail!("still things to fix {:?}", &obligations);
+        // }
     }
     Ok(())
 }

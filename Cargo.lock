@@ -33,6 +33,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf1de2fe8c75bc145a2f577add951f8134889b4795d47466a54a5c846d691693"
 
 [[package]]
+name = "cc"
+version = "1.0.59"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "66120af515773fb005778dc07c261bd201ec8ce50bd6e7144c927753fe013381"
+
+[[package]]
 name = "cccp"
 version = "0.1.0"
 dependencies = [
@@ -43,10 +49,17 @@ dependencies = [
  "generic-array",
  "libc",
  "nc",
+ "nix",
  "structopt",
  "typenum",
  "walkdir",
 ]
+
+[[package]]
+name = "cfg-if"
+version = "0.1.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4785bdd1c96b2a846b2bd7cc02e86b6b3dbf14e7e53446c4f54c92a361040822"
 
 [[package]]
 name = "clap"
@@ -129,6 +142,18 @@ name = "nc"
 version = "0.4.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7e21573ce3d834506a052c0c3b7447f398492096c49a9007e91be2bde75b57fb"
+
+[[package]]
+name = "nix"
+version = "0.18.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "83450fe6a6142ddd95fb064b746083fc4ef1705fe81f64a64e1d4b39f54a1055"
+dependencies = [
+ "bitflags",
+ "cc",
+ "cfg-if",
+ "libc",
+]
 
 [[package]]
 name = "proc-macro-error"

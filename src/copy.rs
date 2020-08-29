@@ -3,9 +3,11 @@ use crate::utils::FileKind;
 use anyhow::anyhow;
 use anyhow::Context;
 use digest::Digest;
+use nix::errno::Errno;
 use std::collections::HashSet;
 use std::fs::File;
 use std::io::prelude::*;
+use std::io::ErrorKind;
 use std::io::{Read, Write};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
@@ -57,13 +59,44 @@ fn fix_file(
 ) -> anyhow::Result<bool> {
     let mut changed = false;
     let mut crc = Crc64Hasher::default();
-    let mut orig_fd = File::open(orig.as_ref())
-        .with_context(|| format!("Failed to open {} as fix input", orig.as_ref().display()))?;
-    let mut target_fd = std::fs::OpenOptions::new()
+    let mut target_fd = match std::fs::OpenOptions::new()
         .read(true)
         .write(true)
+        .custom_flags(libc::O_NOFOLLOW)
         .open(target.as_ref())
-        .with_context(|| format!("Failed to open {} for fixing", target.as_ref().display()))?;
+    {
+        Ok(x) => x,
+        Err(e) => match e.raw_os_error().map(Errno::from_i32) {
+            Some(Errno::EISDIR) | Some(Errno::ELOOP) => {
+                // remove the target and copy it anew
+                remove_path(&target).with_context(|| {
+                    format!(
+                        "removing copy target {} of file {} because it is not a file",
+                        target.as_ref().display(),
+                        orig.as_ref().display()
+                    )
+                })?;
+                let new_checksum =
+                    copy_file(orig.as_ref(), target.as_ref()).with_context(|| {
+                        format!(
+                            "making a fresh copy of file {} to {}",
+                            orig.as_ref().display(),
+                            target.as_ref().display(),
+                        )
+                    })?;
+
+                fill_checksum(checksum, new_checksum).with_context(|| {
+                    format!("Bad checksum for file {}", orig.as_ref().display())
+                })?;
+                return Ok(true);
+            }
+            _ => Err(e).with_context(|| {
+                format!("Failed to open {} for fixing", target.as_ref().display())
+            })?,
+        },
+    };
+    let mut orig_fd = File::open(orig.as_ref())
+        .with_context(|| format!("Failed to open {} as fix input", orig.as_ref().display()))?;
     let mut reference = [0; 4096];
     let mut actual = [0; 4096];
     let mut offset = 0u64;
@@ -130,7 +163,7 @@ fn copy_symlink(orig: impl AsRef<Path>, target: impl AsRef<Path>) -> anyhow::Res
     match std::fs::remove_file(target.as_ref()) {
         Ok(()) => (),
         Err(e) => match e.kind() {
-            std::io::ErrorKind::NotFound => (),
+            ErrorKind::NotFound => (),
             _ => Err(e)?,
         },
     }
@@ -160,7 +193,7 @@ fn create_directory(target: impl AsRef<Path>) -> anyhow::Result<()> {
     match std::fs::create_dir(target.as_ref()) {
         Ok(()) => Ok(()),
         Err(e) => match e.kind() {
-            std::io::ErrorKind::AlreadyExists => Ok(()),
+            ErrorKind::AlreadyExists => Ok(()),
             _ => {
                 Err(e).with_context(|| format!("creating directory {}", target.as_ref().display()))
             }
@@ -185,6 +218,17 @@ fn directory_checksum(path: impl AsRef<Path>) -> anyhow::Result<Checksum> {
     Ok(res)
 }
 
+fn remove_path(path: impl AsRef<Path>) -> anyhow::Result<()> {
+    match FileKind::of_path(path.as_ref())
+        .with_context(|| format!("stat({}) for removal", path.as_ref().display()))?
+    {
+        FileKind::Directory => std::fs::remove_dir_all(path.as_ref()),
+        _ => std::fs::remove_file(path.as_ref()),
+    }
+    .with_context(|| format!("removing {}", path.as_ref().display()))?;
+    Ok(())
+}
+
 fn fix_directory(
     orig: impl AsRef<Path>,
     target: impl AsRef<Path>,
@@ -197,14 +241,43 @@ fn fix_directory(
     let mut orig_names = HashSet::new();
     let mut target_names = HashSet::new();
 
+    let mut it_target = match std::fs::read_dir(target.as_ref()) {
+        Ok(x) => x,
+        Err(e) => match e.raw_os_error().map(Errno::from_i32) {
+            Some(Errno::ENOTDIR) => {
+                // the target is not a directory, let's remove it, and let the next round fix it
+                remove_path(&target).with_context(|| {
+                    format!(
+                        "removing copy target {} of directory {} because it is not a directory",
+                        target.as_ref().display(),
+                        orig.as_ref().display()
+                    )
+                })?;
+                let new_checksum = copy_directory(&orig, &target).with_context(|| {
+                    format!(
+                        "making a fresh copy of directory {} to {}",
+                        orig.as_ref().display(),
+                        target.as_ref().display()
+                    )
+                })?;
+                // check the checksum
+                fill_checksum(checksum, new_checksum).with_context(|| {
+                    format!("Bad checksum for directory {}", orig.as_ref().display())
+                })?;
+                return Ok(true);
+            }
+            _ => Err(e).with_context(|| {
+                format!("reading directory for fixing {}", target.as_ref().display())
+            })?,
+        },
+    };
+
     let it_orig = std::fs::read_dir(orig.as_ref()).with_context(|| {
         format!(
             "reading directory for comparison {}",
             orig.as_ref().display()
         )
     })?;
-    let mut it_target = std::fs::read_dir(target.as_ref())
-        .with_context(|| format!("reading directory for fixing {}", target.as_ref().display()))?;
 
     for entry in it_orig {
         let entry = entry?;
@@ -245,16 +318,8 @@ fn fix_directory(
     for name in extra {
         changed = true;
         path.push(name);
-        match FileKind::of_path(&path).with_context(|| {
-            format!(
-                "stating extra directory member {} for removal",
-                path.display()
-            )
-        })? {
-            FileKind::Directory => std::fs::remove_dir_all(&path),
-            _ => std::fs::remove_file(&path),
-        }
-        .with_context(|| format!("removing extra directory member {}", path.display()))?;
+        remove_path(&path)
+            .with_context(|| format!("removing extra directory member {}", path.display()))?;
         path.pop();
     }
 
@@ -286,8 +351,26 @@ fn fix_symlink(
     let c1 = symlink_checksum(orig.as_ref())?;
     fill_checksum(checksum, c1)
         .with_context(|| format!("fixing the copy of {}", orig.as_ref().display()))?;
-    let c2 = symlink_checksum(target.as_ref())?;
-    if c2 != c1 {
+
+    let c2 = match symlink_checksum(target.as_ref()) {
+        Ok(c2) => Some(c2),
+        Err(e) => {
+            match e.downcast::<std::io::Error>() {
+                Ok(io) => {
+                    match io.raw_os_error().map(Errno::from_i32) {
+                        Some(Errno::EINVAL) => {
+                            // target is not a symbolic link
+                            remove_path(target.as_ref()).with_context(|| format!("removing copy target {} of symlink {} because it is not a symlink", target.as_ref().display(), orig.as_ref().display()))?;
+                            None
+                        }
+                        _ => Err(io)?,
+                    }
+                }
+                Err(e) => Err(e)?,
+            }
+        }
+    };
+    if c2 != Some(c1) {
         // needs fixing
         copy_symlink(orig.as_ref(), target.as_ref())
             .with_context(|| format!("copy symlink {} to fix", orig.as_ref().display()))?;
@@ -297,16 +380,21 @@ fn fix_symlink(
     }
 }
 
+pub fn copy_directory(
+    orig: impl AsRef<Path>,
+    target: impl AsRef<Path>,
+) -> anyhow::Result<Checksum> {
+    create_directory(target.as_ref())?;
+    directory_checksum(orig.as_ref())
+}
+
 /// Copies a file or directory or symlink `orig` to `target` and returns `orig`'s checksum
 pub fn copy_path(orig: impl AsRef<Path>, target: impl AsRef<Path>) -> anyhow::Result<Checksum> {
     match FileKind::of_path(orig.as_ref())
         .with_context(|| format!("stat({}) to copy", orig.as_ref().display()))?
     {
         FileKind::Regular | FileKind::Device => copy_file(orig.as_ref(), target.as_ref()),
-        FileKind::Directory => {
-            create_directory(target.as_ref())?;
-            directory_checksum(orig.as_ref())
-        }
+        FileKind::Directory => copy_directory(orig.as_ref(), target.as_ref()),
         FileKind::Symlink => {
             copy_symlink(orig.as_ref(), target.as_ref())?;
             symlink_checksum(orig.as_ref())

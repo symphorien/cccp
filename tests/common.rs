@@ -35,8 +35,8 @@ fn copy(t: &TestDir, source: impl AsRef<Path>, destination: impl AsRef<Path>) {
 }
 
 fn run_test_case(t: &TestDir, path: impl AsRef<Path>) {
-    let dest = path.as_ref().with_extension(".dest");
-    let exists = match std::fs::symlink_metadata(&dest) {
+    let dest = path.as_ref().with_extension("dest");
+    let exists = match std::fs::symlink_metadata(dbg!(&dest)) {
         Err(e) => match e.kind() {
             std::io::ErrorKind::NotFound => false,
             _ => panic!("cannot stat {}: {}", path.as_ref().display(), e),
@@ -44,7 +44,7 @@ fn run_test_case(t: &TestDir, path: impl AsRef<Path>) {
         Ok(_) => true,
     };
     let working = "./dest";
-    if exists {
+    if dbg!(exists) {
         copy(t, &dest, working);
     }
     run(t, &path, working);
