@@ -11,16 +11,13 @@ use std::path::{Path, PathBuf};
 use structopt::StructOpt;
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
-struct Obligation<T: AsRef<Path> + std::hash::Hash + Eq> {
-    source: T,
+struct Obligation {
+    source: PathBuf,
     dest: PathBuf,
     checksum: Checksum,
 }
 
-fn first_copy(
-    orig: impl AsRef<Path>,
-    target: &PathBuf,
-) -> anyhow::Result<HashSet<Obligation<PathBuf>>> {
+fn first_copy(orig: impl AsRef<Path>, target: &PathBuf) -> anyhow::Result<HashSet<Obligation>> {
     let mut orig_paths = vec![];
     // walkdir always dereferences its arguments if it is a symlink, so we special case it
     match FileKind::of_path(orig.as_ref())
