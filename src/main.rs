@@ -3,6 +3,7 @@ mod checksum;
 mod copy;
 mod utils;
 
+use crate::utils::FileKind;
 use anyhow::Context;
 use checksum::Checksum;
 use std::collections::HashSet;
@@ -21,9 +22,18 @@ fn first_copy(
     target: &PathBuf,
 ) -> anyhow::Result<HashSet<Obligation<PathBuf>>> {
     let mut orig_paths = vec![];
-    for entry in walkdir::WalkDir::new(orig.as_ref()) {
-        let entry = entry?;
-        orig_paths.push(entry.into_path());
+    // walkdir always dereferences its arguments if it is a symlink, so we special case it
+    match FileKind::of_path(orig.as_ref())
+        .with_context(|| format!("stat({}) to enumerate obligations", orig.as_ref().display()))?
+    {
+        FileKind::Directory => {
+            for entry in walkdir::WalkDir::new(orig.as_ref()) {
+                let entry =
+                    entry.with_context(|| format!("iterating in {}", orig.as_ref().display()))?;
+                orig_paths.push(entry.into_path());
+            }
+        }
+        _ => orig_paths.push(orig.as_ref().to_path_buf()),
     }
     let mut new_paths = utils::change_prefixes(orig, target, &orig_paths);
     let mut res = HashSet::new();
