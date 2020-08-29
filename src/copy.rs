@@ -241,11 +241,22 @@ fn fix_directory(
     let mut orig_names = HashSet::new();
     let mut target_names = HashSet::new();
 
-    let mut it_target = match std::fs::read_dir(target.as_ref()) {
+    // unfortunately, read_dir follows symlinks, so we have to stat() before
+    let raw_it_target = match FileKind::of_path(target.as_ref()).with_context(|| {
+        format!(
+            "stat({}) to check if it is a directory before listing it for fixing",
+            target.as_ref().display(),
+        )
+    })? {
+        FileKind::Directory => std::fs::read_dir(target.as_ref()),
+        _ => Err(Errno::ENOTDIR.into()),
+    };
+
+    let mut it_target = match raw_it_target {
         Ok(x) => x,
         Err(e) => match e.raw_os_error().map(Errno::from_i32) {
             Some(Errno::ENOTDIR) => {
-                // the target is not a directory, let's remove it, and let the next round fix it
+                // the target is not a directory, let's remove it and copy again
                 remove_path(&target).with_context(|| {
                     format!(
                         "removing copy target {} of directory {} because it is not a directory",
