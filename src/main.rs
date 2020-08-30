@@ -7,6 +7,7 @@ use crate::cache::CacheManager;
 use crate::utils::FileKind;
 use anyhow::Context;
 use checksum::Checksum;
+use clap::arg_enum;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use structopt::StructOpt;
@@ -66,25 +67,42 @@ fn first_copy(
     Ok(res)
 }
 
+arg_enum! {
+    #[derive(Debug, Copy, Clone)]
+    enum Mode {
+        Vm,
+        DirectIO,
+    }
+}
+
 #[derive(StructOpt, Debug)]
-#[structopt(name = "basic")]
+#[structopt(name = "cccp")]
 struct Opt {
     /// File or directory to copy
     #[structopt(name = "SOURCE", parse(from_os_str))]
     input: PathBuf,
-    /// Destination. Can a a block device if SOURCE is a regular file.
+    /// Destination. Can be a block device if SOURCE is a regular file.
     #[structopt(name = "DEST", parse(from_os_str))]
     output: PathBuf,
+    /// Only attempt to fix files once, and bail out if it is not enough
+    #[structopt(short = "1", long)]
+    once: bool,
+    /// Method used to prevent re-reading from cache when checking files.
+    #[structopt(possible_values = &Mode::variants(), case_insensitive = true, default_value="directio", short, long)]
+    mode: Mode,
 }
 
 fn main() -> anyhow::Result<()> {
     let opt = Opt::from_args();
-    let mut cache_manager = cache::vm::PageCacheManager::default();
+    let mut cache_manager = match opt.mode {
+        Mode::Vm => Box::new(cache::vm::PageCacheManager::default()) as Box<dyn CacheManager>,
+        Mode::DirectIO => Box::new(cache::directio::DirectIOCacheManager::default()),
+    };
     cache_manager
         .permission_check(&opt.output)
-        .context("Checking permissions for cache management mode")?;
+        .with_context(|| format!("Checking permissions for cache management mode --mode={}", opt.mode))?;
     let mut obligations =
-        first_copy(&cache_manager, &opt.input, &opt.output).context("during initial copy")?;
+        first_copy(&*cache_manager, &opt.input, &opt.output).context("during initial copy")?;
     // corrupt(&opt.output)?;
     while !obligations.is_empty() {
         cache_manager
@@ -93,7 +111,7 @@ fn main() -> anyhow::Result<()> {
         obligations.retain(|obligation| {
             let mut checksum = Some(obligation.checksum);
             let res = copy::fix_path(
-                &cache_manager,
+                &*cache_manager,
                 &obligation.source,
                 &obligation.dest,
                 &mut checksum,
@@ -105,9 +123,9 @@ fn main() -> anyhow::Result<()> {
             }
             res
         });
-        // if !obligations.is_empty() {
-        //     anyhow::bail!("still things to fix {:?}", &obligations);
-        // }
+        if opt.once && !obligations.is_empty() {
+            anyhow::bail!("Still files to fix: {:?}", &obligations);
+        }
     }
     Ok(())
 }

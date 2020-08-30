@@ -12,6 +12,7 @@ fn run(t: &TestDir, source: impl AsRef<Path>, destination: impl AsRef<Path>) {
     let mut c = t.cmd();
     c.env("CCCP_NO_ROOT", "1");
     c.current_dir(t.path("."));
+    c.arg("--once");
     c.args(&[source.as_ref(), destination.as_ref()]);
     dbg!(c).expect_success();
 }

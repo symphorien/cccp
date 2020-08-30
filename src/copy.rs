@@ -53,6 +53,7 @@ fn copy_file(
                 .write(true)
                 .create(true)
                 .mode(mode),
+            0,
             target.as_ref(),
         )
         .with_context(|| {
@@ -89,10 +90,8 @@ fn fix_file(
     let mut changed = false;
     let mut crc = Crc64Hasher::default();
     let mut target_fd = match cache_manager.open_no_cache(
-        std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .custom_flags(libc::O_NOFOLLOW),
+        std::fs::OpenOptions::new().read(true).write(true),
+        libc::O_NOFOLLOW,
         target.as_ref(),
     ) {
         Ok(x) => x,
@@ -376,7 +375,8 @@ fn file_checksum(
     let mut hasher = Crc64Hasher::default();
     let fd = cache_manager
         .open_no_cache(
-            OpenOptions::new().read(true).custom_flags(libc::O_NOFOLLOW),
+            OpenOptions::new().read(true),
+            libc::O_NOFOLLOW,
             path.as_ref(),
         )
         .with_context(|| format!("opening {} for checksum", path.as_ref().display()))?;
