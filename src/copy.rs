@@ -9,15 +9,28 @@ use std::fs::File;
 use std::io::prelude::*;
 use std::io::ErrorKind;
 use std::io::{Read, Write};
+use std::os::unix::io::{FromRawFd, IntoRawFd};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::path::Path;
 
+/// Tells the system that this file descriptor will be read sequentially from offset 0 to end of
+/// file. The modified file descriptor is returned.
+fn fadvise_sequential(f: File) -> anyhow::Result<File> {
+    let fd = f.into_raw_fd();
+    // by building it now, we ensure the file is closed even if posix_fadvise fails.
+    let res = unsafe {File::from_raw_fd(fd)};
+    nix::fcntl::posix_fadvise(fd, 0 /* from offset 0 */, 0 /* full file */, nix::fcntl::PosixFadviseAdvice::POSIX_FADV_SEQUENTIAL).context("posix_fadvise(SEQUENTIAL)")?;
+    Ok(res)
+}
+
+
 /// Copies a file to another and computes the checksum of the original file
 fn copy_file(file: impl AsRef<Path>, target: impl AsRef<Path>) -> anyhow::Result<Checksum> {
     let mut crc = Crc64Hasher::default();
-    let mut orig_fd = File::open(file.as_ref())
+    let orig_fd = File::open(file.as_ref())
         .with_context(|| format!("Failed to open {} for copy input", file.as_ref().display()))?;
+    let mut orig_fd = fadvise_sequential(orig_fd).with_context(|| format!("posix_fadvise({}, SEQUENTIAL)", file.as_ref().display()))?;
     let meta = orig_fd
         .metadata()
         .with_context(|| format!("Failed to stat {} to copy mode", file.as_ref().display()))?;
@@ -95,8 +108,9 @@ fn fix_file(
             })?,
         },
     };
-    let mut orig_fd = File::open(orig.as_ref())
+    let orig_fd = File::open(orig.as_ref())
         .with_context(|| format!("Failed to open {} as fix input", orig.as_ref().display()))?;
+    let mut orig_fd = fadvise_sequential(orig_fd).with_context(|| format!("posix_fadvise({}, SEQUENTIAL)", orig.as_ref().display()))?;
     let mut reference = [0; 4096];
     let mut actual = [0; 4096];
     let mut offset = 0u64;
@@ -339,8 +353,9 @@ fn fix_directory(
 
 fn file_checksum(path: impl AsRef<Path>) -> anyhow::Result<Checksum> {
     let mut hasher = Crc64Hasher::default();
-    let mut fd = std::fs::File::open(path.as_ref())
+    let fd = std::fs::File::open(path.as_ref())
         .with_context(|| format!("opening {} for checksum", path.as_ref().display()))?;
+    let mut fd = fadvise_sequential(fd).with_context(|| format!("posix_fadvise({}, SEQUENTIAL)", path.as_ref().display()))?;
     let mut buffer = [0; 4096];
     loop {
         let n_read = fd
