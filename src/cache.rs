@@ -10,8 +10,10 @@ const VM_DROP_CACHES: &'static str = "/proc/sys/vm/drop_caches";
 
 fn syncfs<T: IntoRawFd + FromRawFd>(f: T) -> anyhow::Result<()> {
     let fd = f.into_raw_fd();
-    nc::syncfs(fd).map_err(|errno| anyhow!("syncfs: errno={}", errno))?;
+    let res = nc::syncfs(fd).map_err(|errno| anyhow!("syncfs: errno={}", errno));
+    // close the file, even if synfs failed.
     drop(unsafe { T::from_raw_fd(fd) });
+    res?;
     Ok(())
 }
 
