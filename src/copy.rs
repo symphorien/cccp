@@ -1,3 +1,4 @@
+use crate::cache::CacheManager;
 use crate::checksum::{fill_checksum, Checksum, Crc64Hasher};
 use crate::utils::FileKind;
 use anyhow::anyhow;
@@ -6,12 +7,13 @@ use digest::Digest;
 use nix::errno::Errno;
 use std::collections::HashSet;
 use std::fs::File;
+use std::fs::OpenOptions;
 use std::io::prelude::*;
 use std::io::ErrorKind;
 use std::io::{Read, Write};
-use std::os::unix::io::{FromRawFd, IntoRawFd};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+use std::os::unix::io::{FromRawFd, IntoRawFd};
 use std::path::Path;
 
 /// Tells the system that this file descriptor will be read sequentially from offset 0 to end of
@@ -19,27 +21,40 @@ use std::path::Path;
 fn fadvise_sequential(f: File) -> anyhow::Result<File> {
     let fd = f.into_raw_fd();
     // by building it now, we ensure the file is closed even if posix_fadvise fails.
-    let res = unsafe {File::from_raw_fd(fd)};
-    nix::fcntl::posix_fadvise(fd, 0 /* from offset 0 */, 0 /* full file */, nix::fcntl::PosixFadviseAdvice::POSIX_FADV_SEQUENTIAL).context("posix_fadvise(SEQUENTIAL)")?;
+    let res = unsafe { File::from_raw_fd(fd) };
+    nix::fcntl::posix_fadvise(
+        fd,
+        0, /* from offset 0 */
+        0, /* full file */
+        nix::fcntl::PosixFadviseAdvice::POSIX_FADV_SEQUENTIAL,
+    )
+    .context("posix_fadvise(SEQUENTIAL)")?;
     Ok(res)
 }
 
-
 /// Copies a file to another and computes the checksum of the original file
-fn copy_file(file: impl AsRef<Path>, target: impl AsRef<Path>) -> anyhow::Result<Checksum> {
+fn copy_file(
+    cache_manager: &dyn CacheManager,
+    file: impl AsRef<Path>,
+    target: impl AsRef<Path>,
+) -> anyhow::Result<Checksum> {
     let mut crc = Crc64Hasher::default();
     let orig_fd = File::open(file.as_ref())
         .with_context(|| format!("Failed to open {} for copy input", file.as_ref().display()))?;
-    let mut orig_fd = fadvise_sequential(orig_fd).with_context(|| format!("posix_fadvise({}, SEQUENTIAL)", file.as_ref().display()))?;
+    let mut orig_fd = fadvise_sequential(orig_fd)
+        .with_context(|| format!("posix_fadvise({}, SEQUENTIAL)", file.as_ref().display()))?;
     let meta = orig_fd
         .metadata()
         .with_context(|| format!("Failed to stat {} to copy mode", file.as_ref().display()))?;
     let mode = meta.mode();
-    let mut target_fd = std::fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .mode(mode)
-        .open(target.as_ref())
+    let mut target_fd = cache_manager
+        .open_no_cache(
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .mode(mode),
+            target.as_ref(),
+        )
         .with_context(|| {
             format!(
                 "Failed to open {} for copy output",
@@ -66,18 +81,20 @@ fn copy_file(file: impl AsRef<Path>, target: impl AsRef<Path>) -> anyhow::Result
 /// fixes a copy of a file, and checks that the checksum is correct. Returns if the copy was
 /// modified.
 fn fix_file(
+    cache_manager: &dyn CacheManager,
     orig: impl AsRef<Path>,
     target: impl AsRef<Path>,
     checksum: &mut Option<Checksum>,
 ) -> anyhow::Result<bool> {
     let mut changed = false;
     let mut crc = Crc64Hasher::default();
-    let mut target_fd = match std::fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .custom_flags(libc::O_NOFOLLOW)
-        .open(target.as_ref())
-    {
+    let mut target_fd = match cache_manager.open_no_cache(
+        std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .custom_flags(libc::O_NOFOLLOW),
+        target.as_ref(),
+    ) {
         Ok(x) => x,
         Err(e) => match e.raw_os_error().map(Errno::from_i32) {
             Some(Errno::EISDIR) | Some(Errno::ELOOP) => {
@@ -89,8 +106,8 @@ fn fix_file(
                         orig.as_ref().display()
                     )
                 })?;
-                let new_checksum =
-                    copy_file(orig.as_ref(), target.as_ref()).with_context(|| {
+                let new_checksum = copy_file(cache_manager, orig.as_ref(), target.as_ref())
+                    .with_context(|| {
                         format!(
                             "making a fresh copy of file {} to {}",
                             orig.as_ref().display(),
@@ -110,7 +127,8 @@ fn fix_file(
     };
     let orig_fd = File::open(orig.as_ref())
         .with_context(|| format!("Failed to open {} as fix input", orig.as_ref().display()))?;
-    let mut orig_fd = fadvise_sequential(orig_fd).with_context(|| format!("posix_fadvise({}, SEQUENTIAL)", orig.as_ref().display()))?;
+    let mut orig_fd = fadvise_sequential(orig_fd)
+        .with_context(|| format!("posix_fadvise({}, SEQUENTIAL)", orig.as_ref().display()))?;
     let mut reference = [0; 4096];
     let mut actual = [0; 4096];
     let mut offset = 0u64;
@@ -351,11 +369,19 @@ fn fix_directory(
     Ok(changed)
 }
 
-fn file_checksum(path: impl AsRef<Path>) -> anyhow::Result<Checksum> {
+fn file_checksum(
+    cache_manager: &mut dyn CacheManager,
+    path: impl AsRef<Path>,
+) -> anyhow::Result<Checksum> {
     let mut hasher = Crc64Hasher::default();
-    let fd = std::fs::File::open(path.as_ref())
+    let fd = cache_manager
+        .open_no_cache(
+            OpenOptions::new().read(true).custom_flags(libc::O_NOFOLLOW),
+            path.as_ref(),
+        )
         .with_context(|| format!("opening {} for checksum", path.as_ref().display()))?;
-    let mut fd = fadvise_sequential(fd).with_context(|| format!("posix_fadvise({}, SEQUENTIAL)", path.as_ref().display()))?;
+    let mut fd = fadvise_sequential(fd)
+        .with_context(|| format!("posix_fadvise({}, SEQUENTIAL)", path.as_ref().display()))?;
     let mut buffer = [0; 4096];
     loop {
         let n_read = fd
@@ -415,11 +441,17 @@ pub fn copy_directory(
 }
 
 /// Copies a file or directory or symlink `orig` to `target` and returns `orig`'s checksum
-pub fn copy_path(orig: impl AsRef<Path>, target: impl AsRef<Path>) -> anyhow::Result<Checksum> {
+pub fn copy_path(
+    cache_manager: &dyn CacheManager,
+    orig: impl AsRef<Path>,
+    target: impl AsRef<Path>,
+) -> anyhow::Result<Checksum> {
     match FileKind::of_path(orig.as_ref())
         .with_context(|| format!("stat({}) to copy", orig.as_ref().display()))?
     {
-        FileKind::Regular | FileKind::Device => copy_file(orig.as_ref(), target.as_ref()),
+        FileKind::Regular | FileKind::Device => {
+            copy_file(cache_manager, orig.as_ref(), target.as_ref())
+        }
         FileKind::Directory => copy_directory(orig.as_ref(), target.as_ref()),
         FileKind::Symlink => {
             copy_symlink(orig.as_ref(), target.as_ref())?;
@@ -435,11 +467,14 @@ pub fn copy_path(orig: impl AsRef<Path>, target: impl AsRef<Path>) -> anyhow::Re
 /// Returns the checksum of a path, except a device file, because the length to checksum
 /// is not known in advance for device files.
 #[allow(unused)]
-pub fn checksum_path(path: impl AsRef<Path>) -> anyhow::Result<Checksum> {
+pub fn checksum_path(
+    cache_manager: &mut dyn CacheManager,
+    path: impl AsRef<Path>,
+) -> anyhow::Result<Checksum> {
     match FileKind::of_path(path.as_ref())
         .with_context(|| format!("stat({}) to copy", path.as_ref().display()))?
     {
-        FileKind::Regular => file_checksum(path.as_ref()),
+        FileKind::Regular => file_checksum(cache_manager, path.as_ref()),
         FileKind::Directory => directory_checksum(path.as_ref()),
         FileKind::Symlink => symlink_checksum(path.as_ref()),
         FileKind::Device => Err(anyhow!(
@@ -458,6 +493,7 @@ pub fn checksum_path(path: impl AsRef<Path>) -> anyhow::Result<Checksum> {
 /// Returns an error if `orig` has changed since it has been checksummed
 /// Sets checksum to `Some` if it was `None`.
 pub fn fix_path(
+    cache_manager: &dyn CacheManager,
     orig: impl AsRef<Path>,
     target: impl AsRef<Path>,
     checksum: &mut Option<Checksum>,
@@ -465,7 +501,9 @@ pub fn fix_path(
     match FileKind::of_path(orig.as_ref())
         .with_context(|| format!("stat({}) to fix", orig.as_ref().display()))?
     {
-        FileKind::Regular | FileKind::Device => fix_file(orig.as_ref(), target.as_ref(), checksum),
+        FileKind::Regular | FileKind::Device => {
+            fix_file(cache_manager, orig.as_ref(), target.as_ref(), checksum)
+        }
         FileKind::Directory => fix_directory(orig.as_ref(), target.as_ref(), checksum),
         FileKind::Symlink => fix_symlink(orig.as_ref(), target.as_ref(), checksum),
         FileKind::Other => Err(anyhow!(

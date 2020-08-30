@@ -1,3 +1,4 @@
+use super::CacheManager;
 use crate::utils::FileKind;
 use anyhow::anyhow;
 use anyhow::Context;
@@ -17,7 +18,7 @@ fn syncfs<T: IntoRawFd + FromRawFd>(f: T) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub fn global_drop_cache(file: impl AsRef<Path>) -> anyhow::Result<()> {
+fn global_drop_cache(file: impl AsRef<Path>) -> anyhow::Result<()> {
     // first sync
     match FileKind::of_path(file.as_ref())
         .with_context(|| format!("stat {} to drop cache", file.as_ref().display()))?
@@ -41,8 +42,8 @@ pub fn global_drop_cache(file: impl AsRef<Path>) -> anyhow::Result<()> {
                 Some(x) => x,
                 None => anyhow::bail!("Cannot syncfs(parent of {file}) because {file} is a symlink and has no parent. Is / a symlink ?", file = file.as_ref().display()),
             };
-            return global_drop_cache(parent)
-        },
+            return global_drop_cache(parent);
+        }
         FileKind::Device => {
             let f = std::fs::File::open(file.as_ref())
                 .with_context(|| format!("open {} to drop cache", file.as_ref().display()))?;
@@ -65,4 +66,22 @@ pub fn global_drop_cache(file: impl AsRef<Path>) -> anyhow::Result<()> {
             .with_context(|| format!("write 3 to {} to drop cache", VM_DROP_CACHES))?;
     }
     Ok(())
+}
+
+#[derive(Default, Debug)]
+pub struct PageCacheManager {}
+impl CacheManager for PageCacheManager {
+    fn permission_check(&mut self, _path: &Path) -> anyhow::Result<()> {
+        if nix::unistd::getuid().is_root() || std::env::var("CCCP_NO_ROOT").is_ok() {
+            Ok(())
+        } else {
+            anyhow::bail!("PageCacheManager needs root privileges")
+        }
+    }
+    fn drop_cache(&mut self, path: &Path) -> anyhow::Result<()> {
+        global_drop_cache(path)
+    }
+    fn name(&self) -> &'static str {
+        "PageCacheManager"
+    }
 }

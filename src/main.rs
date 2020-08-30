@@ -3,6 +3,7 @@ mod checksum;
 mod copy;
 mod utils;
 
+use crate::cache::CacheManager;
 use crate::utils::FileKind;
 use anyhow::Context;
 use checksum::Checksum;
@@ -17,7 +18,11 @@ struct Obligation {
     checksum: Checksum,
 }
 
-fn first_copy(orig: impl AsRef<Path>, target: &PathBuf) -> anyhow::Result<HashSet<Obligation>> {
+fn first_copy(
+    cache_manager: &dyn CacheManager,
+    orig: impl AsRef<Path>,
+    target: &PathBuf,
+) -> anyhow::Result<HashSet<Obligation>> {
     let mut orig_paths = vec![];
     // walkdir always dereferences its arguments if it is a symlink, so we special case it
     match FileKind::of_path(orig.as_ref())
@@ -39,16 +44,17 @@ fn first_copy(orig: impl AsRef<Path>, target: &PathBuf) -> anyhow::Result<HashSe
             .with_context(|| format!("checking if a copy {} already exists", dest.display()))?
         {
             let mut checksum = None;
-            let _changed = copy::fix_path(&source, &dest, &mut checksum).with_context(|| {
-                format!(
-                    "fixing existing copy {} of {}",
-                    dest.display(),
-                    source.display()
-                )
-            })?;
+            let _changed = copy::fix_path(cache_manager, &source, &dest, &mut checksum)
+                .with_context(|| {
+                    format!(
+                        "fixing existing copy {} of {}",
+                        dest.display(),
+                        source.display()
+                    )
+                })?;
             checksum.unwrap()
         } else {
-            copy::copy_path(&source, &dest)
+            copy::copy_path(cache_manager, &source, &dest)
                 .with_context(|| format!("copying {} to {}", source.display(), dest.display()))?
         };
         res.insert(Obligation {
@@ -73,15 +79,27 @@ struct Opt {
 
 fn main() -> anyhow::Result<()> {
     let opt = Opt::from_args();
-    let mut obligations = first_copy(&opt.input, &opt.output).context("during initial copy")?;
+    let mut cache_manager = cache::vm::PageCacheManager::default();
+    cache_manager
+        .permission_check(&opt.output)
+        .context("Checking permissions for cache management mode")?;
+    let mut obligations =
+        first_copy(&cache_manager, &opt.input, &opt.output).context("during initial copy")?;
     // corrupt(&opt.output)?;
     while !obligations.is_empty() {
-        cache::global_drop_cache(&opt.output)?;
+        cache_manager
+            .drop_cache(&opt.output)
+            .with_context(|| format!("Dropping cache below {}", opt.output.display()))?;
         obligations.retain(|obligation| {
             let mut checksum = Some(obligation.checksum);
-            let res = copy::fix_path(&obligation.source, &obligation.dest, &mut checksum)
-                .context("while fixing copy")
-                .unwrap();
+            let res = copy::fix_path(
+                &cache_manager,
+                &obligation.source,
+                &obligation.dest,
+                &mut checksum,
+            )
+            .context("while fixing copy")
+            .unwrap();
             if res {
                 println!("Fixed {}", obligation.dest.display());
             }
