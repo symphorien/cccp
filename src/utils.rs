@@ -27,9 +27,9 @@ impl FileKind {
         }
     }
 
-    pub fn of_path(path: impl AsRef<Path>) -> anyhow::Result<FileKind> {
-        let meta = std::fs::symlink_metadata(path.as_ref())
-            .with_context(|| format!("stat {} to determine file type", path.as_ref().display()))?;
+    pub fn of_path(path: &Path) -> anyhow::Result<FileKind> {
+        let meta = std::fs::symlink_metadata(path)
+            .with_context(|| format!("stat {} to determine file type", path.display()))?;
         Ok(Self::of_metadata(meta))
     }
 
@@ -42,24 +42,20 @@ impl FileKind {
 }
 
 /// Returns without this file exists, without following metadata
-pub fn exists(path: impl AsRef<Path>) -> anyhow::Result<bool> {
-    match std::fs::symlink_metadata(path.as_ref()) {
+pub fn exists(path: &Path) -> anyhow::Result<bool> {
+    match std::fs::symlink_metadata(path) {
         Ok(_) => Ok(true),
         Err(e) => match e.kind() {
             std::io::ErrorKind::NotFound => Ok(false),
-            _ => Err(e).with_context(|| {
-                format!(
-                    "stat({}) to determine if it exists",
-                    path.as_ref().display()
-                )
-            })?,
+            _ => Err(e)
+                .with_context(|| format!("stat({}) to determine if it exists", path.display()))?,
         },
     }
 }
 
-fn change_prefix(path: impl AsRef<Path>, old_prefix_len: usize, new_prefix: &PathBuf) -> PathBuf {
+fn change_prefix(path: &Path, old_prefix_len: usize, new_prefix: &PathBuf) -> PathBuf {
     let mut res = new_prefix.clone();
-    let mut c = path.as_ref().components();
+    let mut c = path.components();
     for _ in 0..old_prefix_len {
         c.next();
     }
@@ -72,14 +68,14 @@ fn change_prefix(path: impl AsRef<Path>, old_prefix_len: usize, new_prefix: &Pat
 
 /// Replaces in place the prefix `old_prefix` of all paths in `paths` by `new_prefix`.
 pub fn change_prefixes<T: AsRef<Path>>(
-    old_prefix: impl AsRef<Path>,
+    old_prefix: &Path,
     new_prefix: &PathBuf,
     paths: &[T],
 ) -> Vec<PathBuf> {
-    let old_prefix_len = old_prefix.as_ref().components().count();
+    let old_prefix_len = old_prefix.components().count();
 
     #[cfg(any(test, debug))]
-    let c: Vec<_> = old_prefix.as_ref().components().collect();
+    let c: Vec<_> = old_prefix.components().collect();
 
     let mut res = Vec::with_capacity(paths.len());
     for path in paths {
@@ -108,7 +104,7 @@ mod test {
         let paths = vec![PathBuf::from(path)];
         let old_prefix = PathBuf::from(old);
         let new_prefix = PathBuf::from(new);
-        let res = change_prefixes(old_prefix, &new_prefix, &paths);
+        let res = change_prefixes(&old_prefix, &new_prefix, &paths);
         let expected_str: Option<&'static str> = expected.into();
         match expected_str {
             Some(x) => assert_eq!(res, vec![PathBuf::from(x)]),

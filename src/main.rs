@@ -21,22 +21,21 @@ struct Obligation {
 
 fn first_copy(
     cache_manager: &dyn CacheManager,
-    orig: impl AsRef<Path>,
+    orig: &Path,
     target: &PathBuf,
 ) -> anyhow::Result<HashSet<Obligation>> {
     let mut orig_paths = vec![];
     // walkdir always dereferences its arguments if it is a symlink, so we special case it
-    match FileKind::of_path(orig.as_ref())
-        .with_context(|| format!("stat({}) to enumerate obligations", orig.as_ref().display()))?
+    match FileKind::of_path(orig)
+        .with_context(|| format!("stat({}) to enumerate obligations", orig.display()))?
     {
         FileKind::Directory => {
-            for entry in walkdir::WalkDir::new(orig.as_ref()) {
-                let entry =
-                    entry.with_context(|| format!("iterating in {}", orig.as_ref().display()))?;
+            for entry in walkdir::WalkDir::new(orig) {
+                let entry = entry.with_context(|| format!("iterating in {}", orig.display()))?;
                 orig_paths.push(entry.into_path());
             }
         }
-        _ => orig_paths.push(orig.as_ref().to_path_buf()),
+        _ => orig_paths.push(orig.to_path_buf()),
     }
     let mut new_paths = utils::change_prefixes(orig, target, &orig_paths);
     let mut res = HashSet::new();
@@ -100,7 +99,12 @@ fn main() -> anyhow::Result<()> {
     };
     cache_manager
         .permission_check(&opt.output)
-        .with_context(|| format!("Checking permissions for cache management mode --mode={}", opt.mode))?;
+        .with_context(|| {
+            format!(
+                "Checking permissions for cache management mode --mode={}",
+                opt.mode
+            )
+        })?;
     let mut obligations =
         first_copy(&*cache_manager, &opt.input, &opt.output).context("during initial copy")?;
     // corrupt(&opt.output)?;

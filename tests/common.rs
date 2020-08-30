@@ -8,43 +8,43 @@ use std::path::Path;
 use std::process::Command;
 
 /// runs cccp with corresponding arguments
-fn run(t: &TestDir, source: impl AsRef<Path>, destination: impl AsRef<Path>) {
+fn run(t: &TestDir, source: &Path, destination: &Path) {
     let mut c = t.cmd();
     c.env("CCCP_NO_ROOT", "1");
     c.current_dir(t.path("."));
     c.arg("--once");
-    c.args(&[source.as_ref(), destination.as_ref()]);
+    c.args(&[source, destination]);
     dbg!(c).expect_success();
 }
 
 /// panics if source and destination are different (with diffoscope)
-fn compare(t: &TestDir, source: impl AsRef<Path>, destination: impl AsRef<Path>) {
+fn compare(t: &TestDir, source: &Path, destination: &Path) {
     let mut c = Command::new("diffoscope");
     c.current_dir(t.path("."));
     c.arg("--exclude-directory-metadata=yes");
-    c.args(&[source.as_ref(), destination.as_ref()]);
+    c.args(&[source, destination]);
     dbg!(c).expect_success();
 }
 
 /// copies source to destination
-fn copy(t: &TestDir, source: impl AsRef<Path>, destination: impl AsRef<Path>) {
+fn copy(t: &TestDir, source: &Path, destination: &Path) {
     let mut c = Command::new("cp");
     c.current_dir(t.path("."));
     c.arg("-r");
-    c.args(&[source.as_ref(), destination.as_ref()]);
+    c.args(&[source, destination]);
     dbg!(c).expect_success();
 }
 
-fn run_test_case(t: &TestDir, path: impl AsRef<Path>) {
-    let dest = path.as_ref().with_extension("dest");
+fn run_test_case(t: &TestDir, path: &Path) {
+    let dest = path.with_extension("dest");
     let exists = match std::fs::symlink_metadata(dbg!(&dest)) {
         Err(e) => match e.kind() {
             std::io::ErrorKind::NotFound => false,
-            _ => panic!("cannot stat {}: {}", path.as_ref().display(), e),
+            _ => panic!("cannot stat {}: {}", path.display(), e),
         },
         Ok(_) => true,
     };
-    let working = "./dest";
+    let working = "./dest".as_ref();
     if dbg!(exists) {
         copy(t, &dest, working);
     }
@@ -61,7 +61,7 @@ fn main() -> anyhow::Result<()> {
             eprintln!("Running test {}", path.display());
             run_test_case(
                 &TestDir::new("cccp", &path.file_name().unwrap().to_string_lossy()),
-                path,
+                &path,
             );
         }
     }
