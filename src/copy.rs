@@ -16,6 +16,13 @@ use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::os::unix::io::{FromRawFd, IntoRawFd};
 use std::path::Path;
 
+#[repr(align(4096))]
+struct Buffer([u8; 4096]);
+
+/// Evaluates to a stack allocated buffer of 4096 bytes aligned to 4096. Used for Direct IO.
+// Costs an extra memcpy, but oh well...
+macro_rules! aligned_buffer({} => {Buffer([0; 4096]).0});
+
 /// Tells the system that this file descriptor will be read sequentially from offset 0 to end of
 /// file. The modified file descriptor is returned.
 fn fadvise_sequential(f: File) -> anyhow::Result<File> {
@@ -57,7 +64,7 @@ fn copy_file(
             target,
         )
         .with_context(|| format!("Failed to open {} for copy output", target.display()))?;
-    let mut buffer = [0; 4096];
+    let mut buffer = aligned_buffer!();
     loop {
         let n_read = orig_fd
             .read(&mut buffer)
@@ -121,8 +128,8 @@ fn fix_file(
         .with_context(|| format!("Failed to open {} as fix input", orig.display()))?;
     let mut orig_fd = fadvise_sequential(orig_fd)
         .with_context(|| format!("posix_fadvise({}, SEQUENTIAL)", orig.display()))?;
-    let mut reference = [0; 4096];
-    let mut actual = [0; 4096];
+    let mut reference = aligned_buffer!();
+    let mut actual = aligned_buffer!();
     let mut offset = 0u64;
     loop {
         // invariant: both fd are at offset `offset` and identical up to there.
@@ -356,7 +363,7 @@ fn file_checksum(cache_manager: &mut dyn CacheManager, path: &Path) -> anyhow::R
         .with_context(|| format!("opening {} for checksum", path.display()))?;
     let mut fd = fadvise_sequential(fd)
         .with_context(|| format!("posix_fadvise({}, SEQUENTIAL)", path.display()))?;
-    let mut buffer = [0; 4096];
+    let mut buffer = aligned_buffer!();
     loop {
         let n_read = fd
             .read(&mut buffer)
