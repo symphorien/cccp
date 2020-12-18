@@ -8,17 +8,32 @@ use std::io::ErrorKind;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 
+use nix::errno::Errno;
+
 #[derive(Default, Debug)]
 pub struct DirectIOCacheManager {}
 
 impl CacheManager for DirectIOCacheManager {
     fn permission_check(&mut self, path: &Path) -> anyhow::Result<()> {
         fn test_file(x: &DirectIOCacheManager, path: &Path, create: bool) -> anyhow::Result<()> {
-            let fd = x
-                .open_no_cache(OpenOptions::new().append(true).create(create), 0, path)
-                .with_context(|| format!("open({}, O_DIRECT)", path.display()))?;
-            drop(fd);
-            Ok(())
+            let fd = x.open_no_cache(OpenOptions::new().append(true).create(create), 0, path);
+            match fd {
+                Ok(fd) => {
+                    drop(fd);
+                    Ok(())
+                }
+                Err(io) => {
+                    let errno = io.raw_os_error().map(Errno::from_i32);
+                    let e = Err(io).with_context(|| format!("open({}, O_DIRECT)", path.display()));
+                    match errno {
+                        Some(Errno::EINVAL) => {
+                            // fs does not support DIRECT_IO
+                            e.context("Filesystem does not support direct IO")?
+                        }
+                        _ => e?,
+                    }
+                }
+            }
         }
         match FileKind::of_path(path) {
             Ok(FileKind::Symlink) | Ok(FileKind::Other) => Ok(()),
