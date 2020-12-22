@@ -61,6 +61,7 @@ impl Progress {
             bar.set_style(ProgressStyle::default_bar()
                           .template("[{elapsed_precise}] [{bar:40.cyan/blue}] {bytes}/{total_bytes}, {bytes_per_sec} ({eta_precise})")
                           .progress_chars("#>-"));
+            bar.set_draw_delta(std::cmp::min(1_000_000, total_size/100));
             bar
         }));
     }

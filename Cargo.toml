@@ -24,3 +24,6 @@ indicatif = "0.15"
 
 [dev-dependencies]
 cli_test_dir = "0.1"
+
+[profile.release]
+debug = true
