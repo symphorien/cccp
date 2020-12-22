@@ -20,6 +20,7 @@ walkdir="2"
 nix = "0.18"
 tempfile = "3"
 clap = "2"
+indicatif = "0.15"
 
 [dev-dependencies]
 cli_test_dir = "0.1"

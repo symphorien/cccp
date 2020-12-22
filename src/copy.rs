@@ -1,5 +1,6 @@
 use crate::cache::CacheManager;
 use crate::checksum::{fill_checksum, Checksum, Crc64Hasher};
+use crate::progress::Progress;
 use crate::utils::FileKind;
 use anyhow::anyhow;
 use anyhow::Context;
@@ -42,6 +43,7 @@ fn fadvise_sequential(f: File) -> anyhow::Result<File> {
 /// Copies a file to another and computes the checksum of the original file
 fn copy_file(
     cache_manager: &dyn CacheManager,
+    progress: &Progress,
     file: &Path,
     target: &Path,
 ) -> anyhow::Result<Checksum> {
@@ -77,6 +79,7 @@ fn copy_file(
         target_fd
             .write_all(data)
             .with_context(|| format!("writing to {} for copy output", target.display()))?;
+        progress.do_bytes(data.len() as u64);
     }
     Ok(crc.into())
 }
@@ -85,6 +88,7 @@ fn copy_file(
 /// modified.
 fn fix_file(
     cache_manager: &dyn CacheManager,
+    progress: &Progress,
     orig: &Path,
     target: &Path,
     checksum: &mut Option<Checksum>,
@@ -107,13 +111,14 @@ fn fix_file(
                         orig.display()
                     )
                 })?;
-                let new_checksum = copy_file(cache_manager, orig, target).with_context(|| {
-                    format!(
-                        "making a fresh copy of file {} to {}",
-                        orig.display(),
-                        target.display(),
-                    )
-                })?;
+                let new_checksum =
+                    copy_file(cache_manager, progress, orig, target).with_context(|| {
+                        format!(
+                            "making a fresh copy of file {} to {}",
+                            orig.display(),
+                            target.display(),
+                        )
+                    })?;
 
                 fill_checksum(checksum, new_checksum)
                     .with_context(|| format!("Bad checksum for file {}", orig.display()))?;
@@ -169,7 +174,7 @@ fn fix_file(
         crc.update(data);
         if append || data != &actual[..n_orig] {
             if !changed {
-                println!("fixing {}", target.display());
+                progress.set_status(format!("Fixing {}", target.display()));
             }
             changed = true;
             target_fd
@@ -180,6 +185,7 @@ fn fix_file(
                 .with_context(|| format!("writing to {} for fixing output", target.display()))?;
         }
         offset += n_orig as u64;
+        progress.do_bytes(n_orig as u64);
     }
     fill_checksum(checksum, crc.into())
         .with_context(|| format!("Bad checksum for file {}", orig.display()))?;
@@ -421,11 +427,12 @@ pub fn copy_directory(orig: &Path, target: &Path) -> anyhow::Result<Checksum> {
 /// Copies a file or directory or symlink `orig` to `target` and returns `orig`'s checksum
 pub fn copy_path(
     cache_manager: &dyn CacheManager,
+    progress: &Progress,
     orig: &Path,
     target: &Path,
 ) -> anyhow::Result<Checksum> {
     match FileKind::of_path(orig).with_context(|| format!("stat({}) to copy", orig.display()))? {
-        FileKind::Regular | FileKind::Device => copy_file(cache_manager, orig, target),
+        FileKind::Regular | FileKind::Device => copy_file(cache_manager, progress, orig, target),
         FileKind::Directory => copy_directory(orig, target),
         FileKind::Symlink => {
             copy_symlink(orig, target)?;
@@ -463,12 +470,15 @@ pub fn checksum_path(
 /// Sets checksum to `Some` if it was `None`.
 pub fn fix_path(
     cache_manager: &dyn CacheManager,
+    progress: &Progress,
     orig: &Path,
     target: &Path,
     checksum: &mut Option<Checksum>,
 ) -> anyhow::Result<bool> {
     match FileKind::of_path(orig).with_context(|| format!("stat({}) to fix", orig.display()))? {
-        FileKind::Regular | FileKind::Device => fix_file(cache_manager, orig, target, checksum),
+        FileKind::Regular | FileKind::Device => {
+            fix_file(cache_manager, progress, orig, target, checksum)
+        }
         FileKind::Directory => fix_directory(orig, target, checksum),
         FileKind::Symlink => fix_symlink(orig, target, checksum),
         FileKind::Other => Err(anyhow!(

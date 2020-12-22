@@ -1,5 +1,6 @@
 use anyhow::Context;
 use std::os::unix::fs::FileTypeExt;
+use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
 #[derive(PartialEq, Eq, Debug, Clone, Copy)]
@@ -12,7 +13,7 @@ pub enum FileKind {
 }
 
 impl FileKind {
-    pub fn of_metadata(metadata: std::fs::Metadata) -> FileKind {
+    pub fn of_metadata(metadata: &std::fs::Metadata) -> FileKind {
         let t = metadata.file_type();
         if t.is_file() {
             FileKind::Regular
@@ -30,14 +31,14 @@ impl FileKind {
     pub fn of_path(path: &Path) -> anyhow::Result<FileKind> {
         let meta = std::fs::symlink_metadata(path)
             .with_context(|| format!("stat {} to determine file type", path.display()))?;
-        Ok(Self::of_metadata(meta))
+        Ok(Self::of_metadata(&meta))
     }
 
     pub fn of_file(file: &std::fs::File) -> anyhow::Result<FileKind> {
         let meta = file
             .metadata()
             .with_context(|| format!("stat of open file {:?} to determine file type", file))?;
-        Ok(Self::of_metadata(meta))
+        Ok(Self::of_metadata(&meta))
     }
 }
 
@@ -67,11 +68,11 @@ fn change_prefix(path: &Path, old_prefix_len: usize, new_prefix: &PathBuf) -> Pa
 }
 
 /// Replaces in place the prefix `old_prefix` of all paths in `paths` by `new_prefix`.
-pub fn change_prefixes<T: AsRef<Path>>(
-    old_prefix: &Path,
-    new_prefix: &PathBuf,
-    paths: &[T],
-) -> Vec<PathBuf> {
+pub fn change_prefixes<T, U>(old_prefix: &Path, new_prefix: &PathBuf, paths: U) -> Vec<PathBuf>
+where
+    T: AsRef<Path>,
+    U: ExactSizeIterator<Item = T>,
+{
     let old_prefix_len = old_prefix.components().count();
 
     #[cfg(any(test, debug))]
@@ -92,6 +93,15 @@ pub fn change_prefixes<T: AsRef<Path>>(
     res
 }
 
+/// Returns the size of the file as needed for the progress bar.
+/// This is 0 for symlinks and directories.
+pub fn copy_size(meta: &std::fs::Metadata) -> u64 {
+    match FileKind::of_metadata(meta) {
+        FileKind::Symlink | FileKind::Directory | FileKind::Other => 0,
+        FileKind::Regular | FileKind::Device => meta.size(),
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -104,7 +114,7 @@ mod test {
         let paths = vec![PathBuf::from(path)];
         let old_prefix = PathBuf::from(old);
         let new_prefix = PathBuf::from(new);
-        let res = change_prefixes(&old_prefix, &new_prefix, &paths);
+        let res = change_prefixes(&old_prefix, &new_prefix, paths.iter());
         let expected_str: Option<&'static str> = expected.into();
         match expected_str {
             Some(x) => assert_eq!(res, vec![PathBuf::from(x)]),

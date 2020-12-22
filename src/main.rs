@@ -1,9 +1,11 @@
 mod cache;
 mod checksum;
 mod copy;
+mod progress;
 mod utils;
 
 use crate::cache::CacheManager;
+use crate::progress::Progress;
 use crate::utils::FileKind;
 use anyhow::Context;
 use checksum::Checksum;
@@ -17,50 +19,58 @@ struct Obligation {
     source: PathBuf,
     dest: PathBuf,
     checksum: Checksum,
+    size: u64,
 }
 
 fn first_copy(
     cache_manager: &dyn CacheManager,
+    progress: &mut Progress,
     orig: &Path,
     target: &PathBuf,
 ) -> anyhow::Result<HashSet<Obligation>> {
     let mut orig_paths = vec![];
+    let meta = std::fs::symlink_metadata(orig)
+        .with_context(|| format!("stat({}) to enumerate obligations", orig.display()))?;
     // walkdir always dereferences its arguments if it is a symlink, so we special case it
-    match FileKind::of_path(orig)
-        .with_context(|| format!("stat({}) to enumerate obligations", orig.display()))?
-    {
+    match FileKind::of_metadata(&meta) {
         FileKind::Directory => {
             for entry in walkdir::WalkDir::new(orig) {
                 let entry = entry.with_context(|| format!("iterating in {}", orig.display()))?;
-                orig_paths.push(entry.into_path());
+                let meta = entry
+                    .metadata()
+                    .with_context(|| format!("stat({}) to get size", entry.path().display()))?;
+                orig_paths.push((entry.into_path(), utils::copy_size(&meta)));
             }
         }
-        _ => orig_paths.push(orig.to_path_buf()),
+        _ => orig_paths.push((orig.to_path_buf(), utils::copy_size(&meta))),
     }
-    let mut new_paths = utils::change_prefixes(orig, target, &orig_paths);
+    let total_size = orig_paths.iter().map(|&(_, size)| size).sum();
+    progress.next_round(total_size);
+    let mut new_paths = utils::change_prefixes(orig, target, orig_paths.iter().map(|x| &x.0));
     let mut res = HashSet::new();
-    for (dest, source) in new_paths.drain(..).zip(orig_paths) {
+    for (dest, (source, size)) in new_paths.drain(..).zip(orig_paths) {
         let checksum = if utils::exists(&dest)
             .with_context(|| format!("checking if a copy {} already exists", dest.display()))?
         {
             let mut checksum = None;
-            let _changed = copy::fix_path(cache_manager, &source, &dest, &mut checksum)
+            let _changed = copy::fix_path(cache_manager, progress, &source, &dest, &mut checksum)
                 .with_context(|| {
-                    format!(
-                        "fixing existing copy {} of {}",
-                        dest.display(),
-                        source.display()
-                    )
-                })?;
+                format!(
+                    "fixing existing copy {} of {}",
+                    dest.display(),
+                    source.display()
+                )
+            })?;
             checksum.unwrap()
         } else {
-            copy::copy_path(cache_manager, &source, &dest)
+            copy::copy_path(cache_manager, progress, &source, &dest)
                 .with_context(|| format!("copying {} to {}", source.display(), dest.display()))?
         };
         res.insert(Obligation {
             source,
             dest,
             checksum,
+            size,
         });
     }
     Ok(res)
@@ -105,31 +115,34 @@ fn main() -> anyhow::Result<()> {
                 opt.mode
             )
         })?;
-    let mut obligations =
-        first_copy(&*cache_manager, &opt.input, &opt.output).context("during initial copy")?;
+    let mut progress = Progress::new();
+    let mut obligations = first_copy(&*cache_manager, &mut progress, &opt.input, &opt.output)
+        .context("during initial copy")?;
     // corrupt(&opt.output)?;
     while !obligations.is_empty() {
+        progress.syncing();
         cache_manager
             .drop_cache(&opt.output)
             .with_context(|| format!("Dropping cache below {}", opt.output.display()))?;
+        let total_size = obligations.iter().map(|o| o.size).sum();
+        progress.next_round(total_size);
         obligations.retain(|obligation| {
             let mut checksum = Some(obligation.checksum);
             let res = copy::fix_path(
                 &*cache_manager,
+                &progress,
                 &obligation.source,
                 &obligation.dest,
                 &mut checksum,
             )
             .context("while fixing copy")
             .unwrap();
-            if res {
-                println!("Fixed {}", obligation.dest.display());
-            }
             res
         });
         if opt.once && !obligations.is_empty() {
             anyhow::bail!("Still files to fix: {:?}", &obligations);
         }
     }
+    progress.done();
     Ok(())
 }
