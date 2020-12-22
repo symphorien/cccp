@@ -17,12 +17,13 @@ use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::os::unix::io::{FromRawFd, IntoRawFd};
 use std::path::Path;
 
+// 8 pages
 #[repr(align(4096))]
-struct Buffer([u8; 4096]);
+struct Buffer([u8; 32768]);
 
-/// Evaluates to a stack allocated buffer of 4096 bytes aligned to 4096. Used for Direct IO.
+/// Evaluates to a stack allocated buffer aligned to 4096. Used for Direct IO.
 // Costs an extra memcpy, but oh well...
-macro_rules! aligned_buffer({} => {Buffer([0; 4096]).0});
+macro_rules! aligned_buffer({} => {Buffer([0; 32768]).0});
 
 /// Tells the system that this file descriptor will be read sequentially from offset 0 to end of
 /// file. The modified file descriptor is returned.
