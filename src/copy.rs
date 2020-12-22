@@ -104,7 +104,7 @@ fn fix_file(
         Err(e) => match e.raw_os_error().map(Errno::from_i32) {
             Some(Errno::EISDIR) | Some(Errno::ELOOP) => {
                 // remove the target and copy it anew
-                remove_path(&target).with_context(|| {
+                remove_path(progress, &target).with_context(|| {
                     format!(
                         "removing copy target {} of file {} because it is not a file",
                         target.display(),
@@ -249,7 +249,8 @@ fn directory_checksum(path: &Path) -> anyhow::Result<Checksum> {
     Ok(res)
 }
 
-fn remove_path(path: &Path) -> anyhow::Result<()> {
+fn remove_path(progress: &Progress, path: &Path) -> anyhow::Result<()> {
+    progress.set_status(format!("Removing {}", path.display()));
     match FileKind::of_path(path)
         .with_context(|| format!("stat({}) for removal", path.display()))?
     {
@@ -261,6 +262,7 @@ fn remove_path(path: &Path) -> anyhow::Result<()> {
 }
 
 fn fix_directory(
+    progress: &Progress,
     orig: &Path,
     target: &Path,
     checksum: &mut Option<Checksum>,
@@ -288,7 +290,7 @@ fn fix_directory(
         Err(e) => match e.raw_os_error().map(Errno::from_i32) {
             Some(Errno::ENOTDIR) => {
                 // the target is not a directory, let's remove it and copy again
-                remove_path(&target).with_context(|| {
+                remove_path(progress, &target).with_context(|| {
                     format!(
                         "removing copy target {} of directory {} because it is not a directory",
                         target.display(),
@@ -354,7 +356,7 @@ fn fix_directory(
     for name in extra {
         changed = true;
         path.push(name);
-        remove_path(&path)
+        remove_path(progress, &path)
             .with_context(|| format!("removing extra directory member {}", path.display()))?;
         path.pop();
     }
@@ -383,6 +385,7 @@ fn file_checksum(cache_manager: &mut dyn CacheManager, path: &Path) -> anyhow::R
 }
 
 fn fix_symlink(
+    progress: &Progress,
     orig: &Path,
     target: &Path,
     checksum: &mut Option<Checksum>,
@@ -399,7 +402,7 @@ fn fix_symlink(
                     match io.raw_os_error().map(Errno::from_i32) {
                         Some(Errno::EINVAL) => {
                             // target is not a symbolic link
-                            remove_path(target).with_context(|| format!("removing copy target {} of symlink {} because it is not a symlink", target.display(), orig.display()))?;
+                            remove_path(progress, target).with_context(|| format!("removing copy target {} of symlink {} because it is not a symlink", target.display(), orig.display()))?;
                             None
                         }
                         _ => Err(io)?,
@@ -411,6 +414,7 @@ fn fix_symlink(
     };
     if c2 != Some(c1) {
         // needs fixing
+        progress.set_status(format!("Fixing {}", target.display()));
         copy_symlink(orig, target)
             .with_context(|| format!("copy symlink {} to fix", orig.display()))?;
         Ok(true)
@@ -479,8 +483,8 @@ pub fn fix_path(
         FileKind::Regular | FileKind::Device => {
             fix_file(cache_manager, progress, orig, target, checksum)
         }
-        FileKind::Directory => fix_directory(orig, target, checksum),
-        FileKind::Symlink => fix_symlink(orig, target, checksum),
+        FileKind::Directory => fix_directory(progress, orig, target, checksum),
+        FileKind::Symlink => fix_symlink(progress, orig, target, checksum),
         FileKind::Other => Err(anyhow!(
             "cannot fix unknown fs path type {}",
             orig.display()
