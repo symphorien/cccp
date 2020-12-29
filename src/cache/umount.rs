@@ -1,5 +1,6 @@
 use super::CacheManager;
 use crate::udev::{get_udisk_blockdev_for, underlying_device};
+use crate::utils::FileKind;
 use anyhow::Context;
 use dbus_udisks2::{Block, UDisks2};
 use std::path::Path;
@@ -30,6 +31,11 @@ fn looks_parent(block: &Block, path: &Path) -> bool {
 
 impl CacheManager for UmountCacheManager {
     fn permission_check(&mut self, path: &Path) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            !matches!(FileKind::of_path(path), Ok(FileKind::Device)),
+            "umount method can only handle files on a filesystem, not a block device {}",
+            path.display()
+        );
         let udisks = UDisks2::new().context("Connecting to udisks dbus interface")?;
         let dev = underlying_device(path)?;
         let block = get_udisk_blockdev_for(&udisks, &dev)?;
