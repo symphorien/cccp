@@ -3,8 +3,8 @@ use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 
 pub mod directio;
-pub mod vm;
 pub mod umount;
+pub mod vm;
 
 pub trait CacheManager {
     /// Returns an error if this Cache Manager is bound to fail (missing privileges, missing
