@@ -2,8 +2,8 @@ mod cache;
 mod checksum;
 mod copy;
 mod progress;
-mod utils;
 mod udev;
+mod utils;
 
 use crate::cache::CacheManager;
 use crate::progress::Progress;
@@ -103,6 +103,34 @@ struct Opt {
     mode: Mode,
 }
 
+/// Attempts to canonicalizes the input path, but allows the last component of the path to be a broken symlink
+/// or to not exist at at all if `must_exist` is true.
+/// May return a non canonical path for example if the path ends with ..
+fn canonicalize(path: &Path, must_exist: bool) -> anyhow::Result<PathBuf> {
+    let canon = match (path.parent(), path.file_name()) {
+        (Some(p), Some(f)) => {
+            let mut p2 = p
+                .canonicalize()
+                .with_context(|| format!("Canonicalizing parent directory {}", p.display()))?;
+            p2.push(f);
+            p2
+        }
+        _ => path.into(),
+    };
+    anyhow::ensure!(
+        !must_exist
+            || utils::exists(&canon).with_context(|| format!(
+                "Checking the existence of {} to canonicalize {}",
+                canon.display(),
+                path.display()
+            ))?,
+        "Path {} (canonicalized to {}) does not exist.",
+        path.display(),
+        canon.display()
+    );
+    Ok(canon)
+}
+
 fn main() -> anyhow::Result<()> {
     let opt = Opt::from_args();
     let mut cache_manager = match opt.mode {
@@ -110,23 +138,31 @@ fn main() -> anyhow::Result<()> {
         Mode::DirectIO => Box::new(cache::directio::DirectIOCacheManager::default()),
         Mode::Umount => Box::new(cache::umount::UmountCacheManager::default()),
     };
-    cache_manager
-        .permission_check(&opt.output)
-        .with_context(|| {
-            format!(
-                "Checking permissions for cache management mode --mode={}",
-                opt.mode
-            )
-        })?;
+    let source_ = canonicalize(&opt.input, true)
+        .with_context(|| format!("Canonicalizing input path {}", opt.input.display()))?;
+    let source = &source_;
+    let target_ = canonicalize(&opt.output, false)
+        .with_context(|| format!("Canonicalizing output path {}", opt.input.display()))?;
+    let target = &target_;
+    if target.is_absolute() && source.is_absolute() {
+        // this prevents trying to unmount .
+        std::env::set_current_dir("/").context("chdir(/)")?;
+    }
+    cache_manager.permission_check(&target).with_context(|| {
+        format!(
+            "Checking permissions for cache management mode --mode={}",
+            opt.mode
+        )
+    })?;
     let mut progress = Progress::new();
-    let mut obligations = first_copy(&*cache_manager, &mut progress, &opt.input, &opt.output)
+    let mut obligations = first_copy(&*cache_manager, &mut progress, source, target)
         .context("during initial copy")?;
     // corrupt(&opt.output)?;
     while !obligations.is_empty() {
         progress.syncing();
         cache_manager
-            .drop_cache(&opt.output)
-            .with_context(|| format!("Dropping cache below {}", opt.output.display()))?;
+            .drop_cache(&target)
+            .with_context(|| format!("Dropping cache below {}", target.display()))?;
         let total_size = obligations.iter().map(|o| o.size).sum();
         progress.next_round(total_size);
         obligations.retain(|obligation| {
