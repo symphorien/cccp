@@ -3,6 +3,7 @@ mod checksum;
 mod copy;
 mod progress;
 mod utils;
+mod udev;
 
 use crate::cache::CacheManager;
 use crate::progress::Progress;
@@ -81,6 +82,7 @@ arg_enum! {
     enum Mode {
         Vm,
         DirectIO,
+        Umount,
     }
 }
 
@@ -106,6 +108,7 @@ fn main() -> anyhow::Result<()> {
     let mut cache_manager = match opt.mode {
         Mode::Vm => Box::new(cache::vm::PageCacheManager::default()) as Box<dyn CacheManager>,
         Mode::DirectIO => Box::new(cache::directio::DirectIOCacheManager::default()),
+        Mode::Umount => Box::new(cache::umount::UmountCacheManager::default()),
     };
     cache_manager
         .permission_check(&opt.output)

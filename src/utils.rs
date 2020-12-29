@@ -5,14 +5,21 @@ use std::path::{Path, PathBuf};
 
 #[derive(PartialEq, Eq, Debug, Clone, Copy)]
 pub enum FileKind {
+    /// A regular file
     Regular,
+    /// A directory
     Directory,
+    /// A symbolic link
     Symlink,
+    /// A block device
+    // does someone really need to copy a file to a character device ?
     Device,
+    /// Something else that we cannot handle.
     Other,
 }
 
 impl FileKind {
+    /// Gets the kind of the file which has this metadata. No syscall is issued.
     pub fn of_metadata(metadata: &std::fs::Metadata) -> FileKind {
         let t = metadata.file_type();
         if t.is_file() {
@@ -21,19 +28,21 @@ impl FileKind {
             FileKind::Directory
         } else if t.is_symlink() {
             FileKind::Symlink
-        } else if t.is_block_device() || t.is_char_device() {
+        } else if t.is_block_device() {
             FileKind::Device
         } else {
             FileKind::Other
         }
     }
 
+    /// Makes a syscall to get the file kind of this path.
     pub fn of_path(path: &Path) -> anyhow::Result<FileKind> {
         let meta = std::fs::symlink_metadata(path)
             .with_context(|| format!("stat {} to determine file type", path.display()))?;
         Ok(Self::of_metadata(&meta))
     }
 
+    /// Makes a syscall to get the file kind of an open file.
     pub fn of_file(file: &std::fs::File) -> anyhow::Result<FileKind> {
         let meta = file
             .metadata()
@@ -42,7 +51,7 @@ impl FileKind {
     }
 }
 
-/// Returns without this file exists, without following metadata
+/// Returns without this file exists, without following symlinks
 pub fn exists(path: &Path) -> anyhow::Result<bool> {
     match std::fs::symlink_metadata(path) {
         Ok(_) => Ok(true),

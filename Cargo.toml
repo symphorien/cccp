@@ -21,6 +21,8 @@ nix = "0.18"
 tempfile = "3"
 clap = "2"
 indicatif = "0.15"
+udev = "0.5"
+dbus-udisks2 = { git = "https://github.com/symphorien/dbus-udisks2", branch = "mount" }
 
 [dev-dependencies]
 cli_test_dir = "0.1"
