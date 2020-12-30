@@ -107,6 +107,12 @@ struct Opt {
 /// or to not exist at at all if `must_exist` is true.
 /// May return a non canonical path for example if the path ends with ..
 fn canonicalize(path: &Path, must_exist: bool) -> anyhow::Result<PathBuf> {
+    // the easy path, and the only one for `.'. Fails for broken symlinks
+    match path.canonicalize() {
+        Ok(p) => return Ok(p),
+        Err(_) => ()
+    }
+    // canonicalize the parent only
     let canon = match (path.parent(), path.file_name()) {
         (Some(p), Some(f)) => {
             let mut p2 = p
@@ -129,6 +135,18 @@ fn canonicalize(path: &Path, must_exist: bool) -> anyhow::Result<PathBuf> {
         canon.display()
     );
     Ok(canon)
+}
+
+#[test]
+fn test_canonicalize() {
+    let mut p = canonicalize(&PathBuf::from("."), true).unwrap();
+    let p2 = canonicalize(&PathBuf::from("./doesnotexist!"), false).unwrap();
+    p.push("doesnotexist!");
+    assert!(p2.is_absolute());
+    assert_eq!(p, p2);
+    assert_eq!(canonicalize(&PathBuf::from("/"), true).unwrap(), PathBuf::from("/"));
+    assert!(canonicalize(&PathBuf::from("/doesnotexist!"), false).is_ok());
+    assert!(canonicalize(&PathBuf::from("/doesnotexist!"), true).is_err());
 }
 
 fn main() -> anyhow::Result<()> {
