@@ -198,7 +198,7 @@ fn copy_symlink(orig: &Path, target: &Path) -> anyhow::Result<Checksum> {
         Ok(()) => (),
         Err(e) => match e.kind() {
             ErrorKind::NotFound => (),
-            _ => Err(e)?,
+            _ => return Err(e.into()),
         },
     }
     let content = std::fs::read_link(orig)
@@ -326,7 +326,7 @@ fn fix_directory(
         hasher.update(bytes);
         res ^= hasher.into();
         match it_target.next() {
-            Some(Err(e)) => Err(e)?,
+            Some(Err(e)) => return Err(e.into()),
             None => {
                 orig_names.insert(name.to_owned());
             }
@@ -406,10 +406,10 @@ fn fix_symlink(
                             remove_path(progress, target).with_context(|| format!("removing copy target {} of symlink {} because it is not a symlink", target.display(), orig.display()))?;
                             None
                         }
-                        _ => Err(io)?,
+                        _ => return Err(io.into()),
                     }
                 }
-                Err(e) => Err(e)?,
+                Err(e) => return Err(e),
             }
         }
     };

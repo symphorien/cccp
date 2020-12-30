@@ -7,7 +7,7 @@ use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::io::{FromRawFd, IntoRawFd};
 use std::path::Path;
 
-const VM_DROP_CACHES: &'static str = "/proc/sys/vm/drop_caches";
+const VM_DROP_CACHES: &str = "/proc/sys/vm/drop_caches";
 
 fn syncfs<T: IntoRawFd + FromRawFd>(f: T) -> anyhow::Result<()> {
     let fd = f.into_raw_fd();

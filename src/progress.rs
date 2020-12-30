@@ -27,12 +27,16 @@ impl Progress {
 
     /// Display a short status message. Replaces the previous message if applicable.
     pub fn set_status(&self, msg: impl AsRef<str>) {
-        self.round_bar.as_ref().map(|x| x.set_message(msg.as_ref()));
+        if let Some(b) = self.round_bar.as_ref() {
+            b.set_message(msg.as_ref())
+        }
     }
 
     /// Call this when copy is finished and the CacheManager is asked to drop cache.
     pub fn syncing(&mut self) {
-        self.bytes_bar.as_ref().map(|x| x.finish_and_clear());
+        if let Some(b) = self.bytes_bar.as_ref() {
+            b.finish_and_clear()
+        }
         self.set_status("Syncing");
     }
 
@@ -44,40 +48,46 @@ impl Progress {
                 self.bytes_bar.is_none(),
                 "did not call Progress::next_round before bytes"
             );
-            let bar = ProgressBar::new_spinner();
-            bar.set_style(
-                ProgressStyle::default_spinner().template("{spinner} Round {pos}. {msg}"),
-            );
-            self.round_bar = Some(self.multi.add(bar));
+            let b = ProgressBar::new_spinner();
+            b.set_style(ProgressStyle::default_spinner().template("{spinner} Round {pos}. {msg}"));
+            self.round_bar = Some(self.multi.add(b));
             // this must be done after the bar is added to the MultiProgress
-            self.round_bar.as_ref().map(|x| x.enable_steady_tick(200));
+            if let Some(b) = self.round_bar.as_ref() {
+                b.enable_steady_tick(200)
+            }
             let multi = self.multi.clone();
             std::thread::spawn(move || multi.join().context("joining progress bar").unwrap());
         }
         self.set_status("");
-        self.round_bar.as_ref().map(|x| x.inc(1));
+        if let Some(b) = self.round_bar.as_ref() {
+            b.inc(1)
+        }
         self.bytes_bar = Some(self.multi.add({
-            let bar = ProgressBar::new(total_size);
-            bar.set_style(ProgressStyle::default_bar()
+            let b = ProgressBar::new(total_size);
+            b.set_style(ProgressStyle::default_bar()
                           .template("[{elapsed_precise}] [{bar:40.cyan/blue}] {bytes}/{total_bytes}, {bytes_per_sec} ({eta_precise})")
                           .progress_chars("#>-"));
-            bar.set_draw_delta(std::cmp::min(1_000_000, total_size/100));
-            bar
+            b.set_draw_delta(std::cmp::min(1_000_000, total_size/100));
+            b
         }));
     }
 
     /// Notifies that `n` bytes were copied.
     pub fn do_bytes(&self, n: u64) {
-        let bar = self
+        let b = self
             .bytes_bar
             .as_ref()
             .expect("called do_bytes() before next_round()");
-        bar.inc(n);
+        b.inc(n);
     }
 
     /// Clears the progress bar. Must be called, otherwise the process will not terminate.
     pub fn done(self) {
-        self.bytes_bar.map(|x| x.finish_and_clear());
-        self.round_bar.map(|x| x.finish_and_clear());
+        if let Some(b) = self.bytes_bar.as_ref() {
+            b.finish_and_clear()
+        }
+        if let Some(b) = self.round_bar.as_ref() {
+            b.finish_and_clear()
+        }
     }
 }

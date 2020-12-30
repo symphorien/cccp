@@ -167,7 +167,7 @@ fn main() -> anyhow::Result<()> {
         progress.next_round(total_size);
         obligations.retain(|obligation| {
             let mut checksum = Some(obligation.checksum);
-            let res = copy::fix_path(
+            copy::fix_path(
                 &*cache_manager,
                 &progress,
                 &obligation.source,
@@ -175,8 +175,7 @@ fn main() -> anyhow::Result<()> {
                 &mut checksum,
             )
             .context("while fixing copy")
-            .unwrap();
-            res
+            .unwrap()
         });
         if opt.once && !obligations.is_empty() {
             anyhow::bail!("Still files to fix: {:?}", &obligations);

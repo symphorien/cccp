@@ -57,9 +57,10 @@ pub fn get_udisk_blockdev_for(udisks: &UDisks2, dev: &Device) -> anyhow::Result<
         ),
         Some(x) => x,
     };
-    match udisks.get_blocks().find(|b| {
-        b.device.as_path() == node || b.symlinks.iter().find(|s| s.as_path() == node).is_some()
-    }) {
+    match udisks
+        .get_blocks()
+        .find(|b| b.device.as_path() == node || b.symlinks.iter().any(|s| s.as_path() == node))
+    {
         None => anyhow::bail!(
             "Device {} (for {}) is not known to UDisks2",
             node.display(),
