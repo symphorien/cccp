@@ -165,7 +165,7 @@ fn main() -> anyhow::Result<()> {
         .with_context(|| format!("Canonicalizing input path {}", opt.input.display()))?;
     let source = &source_;
     let target_ = canonicalize(&opt.output, false)
-        .with_context(|| format!("Canonicalizing output path {}", opt.input.display()))?;
+        .with_context(|| format!("Canonicalizing output path {}", opt.output.display()))?;
     let target = &target_;
     if target.is_absolute() && source.is_absolute() {
         // this prevents trying to unmount .
