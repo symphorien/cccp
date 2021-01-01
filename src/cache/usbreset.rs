@@ -1,9 +1,9 @@
-use super::CacheManager;
+use super::{CacheManager, Replacement};
 use crate::udev::{
     ensure_mounted, get_udisk_blockdev_by_drive_and_size, get_udisk_blockdev_by_uuid,
     get_udisk_blockdev_for, reset_usb_hub, udisk_drives_for, underlying_device, usb_hub_for,
 };
-use crate::utils::{looks_parent, FileKind, Unique};
+use crate::utils::{get_mountpoint_in, FileKind, Unique};
 use anyhow::Context;
 use dbus_udisks2::{Block, Drive, UDisks2};
 use std::path::Path;
@@ -75,7 +75,7 @@ impl CacheManager for UsbResetCacheManager {
                     path.display()
                 );
                 anyhow::ensure!(
-                    looks_parent(&block, path),
+                    get_mountpoint_in(&block, path).is_some(),
                     "File system on block device {}, corresponding to sysfs {}, does not looks like it bears {}: mount points {:?}",
                     block.preferred_device.display(),
                     dev.syspath().display(),
@@ -140,7 +140,7 @@ impl CacheManager for UsbResetCacheManager {
         Ok(())
     }
 
-    fn drop_cache(&mut self, path: &Path) -> anyhow::Result<()> {
+    fn drop_cache(&mut self, path: &Path) -> anyhow::Result<Option<Replacement>> {
         let inner = self.0.as_mut().ok_or_else(|| {
             anyhow::anyhow!("tried to drop_cache on uninitialised UmountCacheManager")
         })?;
@@ -254,7 +254,7 @@ impl CacheManager for UsbResetCacheManager {
             }
         }
         // FIXME: update the fields of inner.
-        Ok(())
+        Ok(todo!())
     }
 
     fn name(&self) -> &'static str {

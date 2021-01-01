@@ -5,13 +5,12 @@ mod progress;
 mod udev;
 mod utils;
 
-use crate::cache::CacheManager;
+use crate::cache::{CacheManager, Replacement};
 use crate::progress::Progress;
-use crate::utils::FileKind;
+use crate::utils::{change_prefixes, FileKind};
 use anyhow::Context;
 use checksum::Checksum;
 use clap::arg_enum;
-use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use structopt::StructOpt;
 
@@ -28,7 +27,7 @@ fn first_copy(
     progress: &mut Progress,
     orig: &Path,
     target: &PathBuf,
-) -> anyhow::Result<HashSet<Obligation>> {
+) -> anyhow::Result<Vec<Obligation>> {
     let mut orig_paths = vec![];
     let meta = std::fs::symlink_metadata(orig)
         .with_context(|| format!("stat({}) to enumerate obligations", orig.display()))?;
@@ -47,9 +46,10 @@ fn first_copy(
     }
     let total_size = orig_paths.iter().map(|&(_, size)| size).sum();
     progress.next_round(total_size);
-    let mut new_paths = utils::change_prefixes(orig, target, orig_paths.iter().map(|x| &x.0));
-    let mut res = HashSet::new();
-    for (dest, (source, size)) in new_paths.drain(..).zip(orig_paths) {
+    let mut to_new_paths = utils::change_prefixes(orig, target);
+    let mut res = Vec::new();
+    for (source, size) in orig_paths {
+        let dest = to_new_paths(&source);
         let checksum = if utils::exists(&dest)
             .with_context(|| format!("checking if a copy {} already exists", dest.display()))?
         {
@@ -67,7 +67,7 @@ fn first_copy(
             copy::copy_path(cache_manager, progress, &source, &dest)
                 .with_context(|| format!("copying {} to {}", source.display(), dest.display()))?
         };
-        res.insert(Obligation {
+        res.push(Obligation {
             source,
             dest,
             checksum,
@@ -183,9 +183,15 @@ fn main() -> anyhow::Result<()> {
     // corrupt(&opt.output)?;
     while !obligations.is_empty() {
         progress.syncing();
-        cache_manager
+        if let Some(Replacement { before, after }) = cache_manager
             .drop_cache(&target)
-            .with_context(|| format!("Dropping cache below {}", target.display()))?;
+            .with_context(|| format!("Dropping cache below {}", target.display()))?
+        {
+            let mut f = change_prefixes(before.as_path(), after.as_path());
+            for o in obligations.iter_mut() {
+                o.dest = f(o.dest.as_path());
+            }
+        }
         let total_size = obligations.iter().map(|o| o.size).sum();
         progress.next_round(total_size);
         obligations.retain(|obligation| {

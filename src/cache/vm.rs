@@ -1,4 +1,4 @@
-use super::CacheManager;
+use super::{CacheManager, Replacement};
 use crate::utils::FileKind;
 use anyhow::anyhow;
 use anyhow::Context;
@@ -75,8 +75,9 @@ impl CacheManager for PageCacheManager {
             anyhow::bail!("PageCacheManager needs root privileges")
         }
     }
-    fn drop_cache(&mut self, path: &Path) -> anyhow::Result<()> {
-        global_drop_cache(path)
+    fn drop_cache(&mut self, path: &Path) -> anyhow::Result<Option<Replacement>> {
+        global_drop_cache(path)?;
+        Ok(None)
     }
     fn name(&self) -> &'static str {
         "PageCacheManager"

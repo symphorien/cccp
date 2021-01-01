@@ -1,4 +1,4 @@
-use super::CacheManager;
+use super::{CacheManager, Replacement};
 use crate::utils::FileKind;
 
 use anyhow::Context;
@@ -96,8 +96,8 @@ impl CacheManager for DirectIOCacheManager {
             .custom_flags(libc::O_DIRECT | custom_flags)
             .open(path)
     }
-    fn drop_cache(&mut self, _path: &Path) -> anyhow::Result<()> {
-        Ok(())
+    fn drop_cache(&mut self, _path: &Path) -> anyhow::Result<Option<Replacement>> {
+        Ok(None)
     }
     fn name(&self) -> &'static str {
         "DirectIOCacheManager"

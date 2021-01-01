@@ -1,9 +1,9 @@
-use super::CacheManager;
+use super::{CacheManager, Replacement};
 use crate::udev::{ensure_mounted, get_udisk_blockdev_for, underlying_device};
-use crate::utils::{looks_parent, FileKind};
+use crate::utils::{change_prefixes, get_mountpoint_in, FileKind};
 use anyhow::Context;
 use dbus_udisks2::{Block, UDisks2};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 const LONG_TIMEOUT: Duration = Duration::from_secs(3600);
@@ -17,6 +17,7 @@ pub struct UmountCacheManager(Option<Inner>);
 struct Inner {
     udisks: UDisks2,
     fs: Block,
+    mountpoint: PathBuf,
 }
 
 impl CacheManager for UmountCacheManager {
@@ -36,19 +37,24 @@ impl CacheManager for UmountCacheManager {
             dev.syspath().display(),
             path.display()
         );
-        anyhow::ensure!(
-            looks_parent(&block, path),
-            "File system on block device {}, corresponding to sysfs {}, does not looks like it bears {}: mount points {:?}",
+        let mountpoint = match get_mountpoint_in(&block, path) {
+            None => anyhow::bail!("File system on block device {}, corresponding to sysfs {}, does not looks like it bears {}: mount points {:?}",
             block.preferred_device.display(),
             dev.syspath().display(),
             path.display(),
             &block.mount_points
-        );
-        self.0 = Some(Inner { udisks, fs: block });
+        ),
+        Some(x) => x.to_path_buf(),
+        };
+        self.0 = Some(Inner {
+            udisks,
+            fs: block,
+            mountpoint,
+        });
         Ok(())
     }
 
-    fn drop_cache(&mut self, path: &Path) -> anyhow::Result<()> {
+    fn drop_cache(&mut self, path: &Path) -> anyhow::Result<Option<Replacement>> {
         let inner = self.0.as_mut().ok_or_else(|| {
             anyhow::anyhow!("tried to drop_cache on uninitialised UmountCacheManager")
         })?;
@@ -63,23 +69,21 @@ impl CacheManager for UmountCacheManager {
             .with_context(|| format!("Unmounting {}", inner.fs.preferred_device.display()))?;
         let remounted_path = ensure_mounted(&mut inner.udisks, &inner.fs, LONG_TIMEOUT)
             .with_context(|| format!("Remounting {}", &inner.fs.preferred_device.display()))?;
-        anyhow::ensure!(
-            path.starts_with(&remounted_path),
-            "File system on block device {} was not remounted on a parent of {} but {}",
-            inner.fs.preferred_device.display(),
-            path.display(),
-            remounted_path.display()
-        );
-        std::fs::symlink_metadata(path.parent().expect("tried to unmount /")).with_context(
-            || {
-                format!(
-                    "checking that the parent of {} still exists after remounting {}",
-                    path.display(),
-                    inner.fs.preferred_device.display(),
-                )
-            },
-        )?;
-        Ok(())
+        let (res, new_path) = if path.starts_with(&remounted_path) {
+            (None, path.to_path_buf())
+        } else {
+            let mut f = change_prefixes(inner.mountpoint.as_path(), remounted_path.as_path());
+            let new_path = f(path);
+            (
+                Some(Replacement {
+                    before: inner.mountpoint.clone(),
+                    after: remounted_path.clone(),
+                }),
+                new_path,
+            )
+        };
+        self.permission_check(new_path.as_path())?;
+        Ok(res)
     }
     fn name(&self) -> &'static str {
         "UmountCacheManager"

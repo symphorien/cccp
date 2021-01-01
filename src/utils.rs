@@ -63,8 +63,8 @@ pub fn exists(path: &Path) -> anyhow::Result<bool> {
     }
 }
 
-fn change_prefix(path: &Path, old_prefix_len: usize, new_prefix: &PathBuf) -> PathBuf {
-    let mut res = new_prefix.clone();
+fn change_prefix(path: &Path, old_prefix_len: usize, new_prefix: &Path) -> PathBuf {
+    let mut res = new_prefix.to_path_buf();
     let mut c = path.components();
     for _ in 0..old_prefix_len {
         c.next();
@@ -77,39 +77,36 @@ fn change_prefix(path: &Path, old_prefix_len: usize, new_prefix: &PathBuf) -> Pa
 }
 
 /// Replaces in place the prefix `old_prefix` of all paths in `paths` by `new_prefix`.
-pub fn change_prefixes<T, U>(old_prefix: &Path, new_prefix: &PathBuf, paths: U) -> Vec<PathBuf>
-where
-    T: AsRef<Path>,
-    U: ExactSizeIterator<Item = T>,
-{
+pub fn change_prefixes<'a>(
+    old_prefix: &'a Path,
+    new_prefix: &'a Path,
+) -> Box<dyn for<'b> FnMut(&'b Path) -> PathBuf + 'a> {
     let old_prefix_len = old_prefix.components().count();
 
     #[cfg(any(test, debug))]
     let c: Vec<_> = old_prefix.components().collect();
 
-    let mut res = Vec::with_capacity(paths.len());
-    for path in paths {
+    let f = move |path: &'_ Path| -> PathBuf {
         #[cfg(any(test, debug))]
         {
-            assert_eq!(
-                c,
-                dbg!(path.as_ref().components().take(c.len()).collect::<Vec<_>>())
-            );
+            assert_eq!(c, dbg!(path.components().take(c.len()).collect::<Vec<_>>()));
         }
-        let new = change_prefix(path.as_ref(), old_prefix_len, new_prefix);
-        res.push(new);
-    }
-    res
+        change_prefix(path, old_prefix_len, new_prefix)
+    };
+    Box::new(f)
 }
 
-/// returns true if block is synctatically the parent of path.
-pub fn looks_parent(block: &dbus_udisks2::Block, path: &Path) -> bool {
+/// returns the mountpoint of block which is synctatically the parent of path.
+pub fn get_mountpoint_in<'a, 'b>(
+    block: &'a dbus_udisks2::Block,
+    path: &'b Path,
+) -> Option<&'a Path> {
     for i in block.mount_points.iter() {
         if path.starts_with(i) {
-            return true;
+            return Some(i);
         }
     }
-    false
+    return None;
 }
 
 /// Returns the size of the file as needed for the progress bar.
@@ -155,15 +152,15 @@ mod test {
         new: &'static str,
         expected: impl Into<Option<&'static str>>,
     ) {
-        let paths = vec![PathBuf::from(path)];
         let old_prefix = PathBuf::from(old);
         let new_prefix = PathBuf::from(new);
-        let res = change_prefixes(&old_prefix, &new_prefix, paths.iter());
+        let mut f = change_prefixes(&old_prefix, &new_prefix);
+        let res = f(PathBuf::from(path).as_path());
         let expected_str: Option<&'static str> = expected.into();
         match expected_str {
-            Some(x) => assert_eq!(res, vec![PathBuf::from(x)]),
+            Some(x) => assert_eq!(res, PathBuf::from(x)),
             None => {
-                dbg!(paths);
+                dbg!(path, res);
             }
         }
     }
