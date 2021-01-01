@@ -211,7 +211,7 @@ pub fn reset_usb_hub(dev: &Device, dryrun: bool) -> anyhow::Result<()> {
     buspath.push(leftpad(devnum.as_bytes()).context("dev number")?);
     let file = std::fs::OpenOptions::new()
         .write(true)
-        .open(dbg!(&buspath))
+        .open(&buspath)
         .with_context(|| format!("Opening usb device {} for reset ioctl", buspath.display()))?;
     if !dryrun {
         let fd = file.into_raw_fd();
