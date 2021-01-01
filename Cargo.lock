@@ -243,9 +243,12 @@ dependencies = [
 
 [[package]]
 name = "nc"
-version = "0.4.10"
+version = "0.4.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7e21573ce3d834506a052c0c3b7447f398492096c49a9007e91be2bde75b57fb"
+checksum = "0ba251088e36bd68873b7e9f0a9398a693a0dc14eeaa7842b7c252f005080d55"
+dependencies = [
+ "cc",
+]
 
 [[package]]
 name = "nix"
