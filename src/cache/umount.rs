@@ -1,5 +1,5 @@
 use super::CacheManager;
-use crate::udev::{get_udisk_blockdev_for, underlying_device};
+use crate::udev::{ensure_mounted, get_udisk_blockdev_for, underlying_device};
 use crate::utils::{looks_parent, FileKind};
 use anyhow::Context;
 use dbus_udisks2::{Block, UDisks2};
@@ -49,7 +49,7 @@ impl CacheManager for UmountCacheManager {
     }
 
     fn drop_cache(&mut self, path: &Path) -> anyhow::Result<()> {
-        let inner = self.0.as_ref().ok_or_else(|| {
+        let inner = self.0.as_mut().ok_or_else(|| {
             anyhow::anyhow!("tried to drop_cache on uninitialised UmountCacheManager")
         })?;
         inner
@@ -61,15 +61,7 @@ impl CacheManager for UmountCacheManager {
                 LONG_TIMEOUT,
             )
             .with_context(|| format!("Unmounting {}", inner.fs.preferred_device.display()))?;
-        let remounted_path = inner
-            .udisks
-            .mount(
-                &inner.fs,
-                /*interactive */ true,
-                None,
-                None,
-                LONG_TIMEOUT,
-            )
+        let remounted_path = ensure_mounted(&mut inner.udisks, &inner.fs, LONG_TIMEOUT)
             .with_context(|| format!("Remounting {}", &inner.fs.preferred_device.display()))?;
         anyhow::ensure!(
             path.starts_with(&remounted_path),
