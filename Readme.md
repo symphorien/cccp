@@ -53,9 +53,12 @@ and will affect the performance of the full system.
 * `--mode=umount` bypasses the page cache by unmounting and remounting the target
 filesystem with udisks. For USB drives, this usually requires no privileges, but
 you must not be using the drive in any other way.
+* `--mode=usbreset` resets the usb port of the drive. This drops the page cache because
+the filesystem is unmounted, and possibly has an effect on the drive itself. I don't
+know for sure. Requires root and udisks.
 
-None of these methods is able to bypass a possible cache in the drive. There
-are plans for that, but in the mean time, you can use the manual method: run `cccp`
-with whatever method you want, remove the usb drive, plug it in again, and rerun
-`cccp`. If `cccp` does not display a message about fixing any file, then the
-first copy was successful.
+There are plans for adding a method power cycling the drive with uhubctl. This
+would be the best possible way to drop device-side caches.  In the mean time,
+you can use the manual method: run `cccp` with whatever method you want, remove
+the usb drive, plug it in again, and rerun `cccp`. If `cccp` does not display a
+message about fixing any file, then the first copy was successful.
