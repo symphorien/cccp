@@ -83,6 +83,7 @@ arg_enum! {
         Vm,
         DirectIO,
         Umount,
+        UsbReset,
     }
 }
 
@@ -110,7 +111,7 @@ fn canonicalize(path: &Path, must_exist: bool) -> anyhow::Result<PathBuf> {
     // the easy path, and the only one for `.'. Fails for broken symlinks
     match path.canonicalize() {
         Ok(p) => return Ok(p),
-        Err(_) => ()
+        Err(_) => (),
     }
     // canonicalize the parent only
     let canon = match (path.parent(), path.file_name()) {
@@ -144,7 +145,10 @@ fn test_canonicalize() {
     p.push("doesnotexist!");
     assert!(p2.is_absolute());
     assert_eq!(p, p2);
-    assert_eq!(canonicalize(&PathBuf::from("/"), true).unwrap(), PathBuf::from("/"));
+    assert_eq!(
+        canonicalize(&PathBuf::from("/"), true).unwrap(),
+        PathBuf::from("/")
+    );
     assert!(canonicalize(&PathBuf::from("/doesnotexist!"), false).is_ok());
     assert!(canonicalize(&PathBuf::from("/doesnotexist!"), true).is_err());
 }
@@ -155,6 +159,7 @@ fn main() -> anyhow::Result<()> {
         Mode::Vm => Box::new(cache::vm::PageCacheManager::default()) as Box<dyn CacheManager>,
         Mode::DirectIO => Box::new(cache::directio::DirectIOCacheManager::default()),
         Mode::Umount => Box::new(cache::umount::UmountCacheManager::default()),
+        Mode::UsbReset => Box::new(cache::usbreset::UsbResetCacheManager::default()),
     };
     let source_ = canonicalize(&opt.input, true)
         .with_context(|| format!("Canonicalizing input path {}", opt.input.display()))?;

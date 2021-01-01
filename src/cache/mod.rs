@@ -4,6 +4,7 @@ use std::path::Path;
 
 pub mod directio;
 pub mod umount;
+pub mod usbreset;
 pub mod vm;
 
 pub trait CacheManager {

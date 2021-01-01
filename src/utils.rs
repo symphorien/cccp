@@ -102,12 +102,47 @@ where
     res
 }
 
+/// returns true if block is synctatically the parent of path.
+pub fn looks_parent(block: &dbus_udisks2::Block, path: &Path) -> bool {
+    for i in block.mount_points.iter() {
+        if path.starts_with(i) {
+            return true;
+        }
+    }
+    false
+}
+
 /// Returns the size of the file as needed for the progress bar.
 /// This is 0 for symlinks and directories.
 pub fn copy_size(meta: &std::fs::Metadata) -> u64 {
     match FileKind::of_metadata(meta) {
         FileKind::Symlink | FileKind::Directory | FileKind::Other => 0,
         FileKind::Regular | FileKind::Device => meta.size(),
+    }
+}
+
+/// Return type for `get_unique`.
+pub enum Unique<T> {
+    /// The iterator had no element
+    Zero,
+    /// The iterator had this one element.
+    One(T),
+    /// The iterator had several elements.
+    Several,
+}
+
+/// Returns the only element of this iterator, or indicate whether there was
+/// zero or more than one elements.
+pub fn get_unique<I, T>(mut iter: I) -> Unique<T>
+where
+    I: Iterator<Item = T>,
+{
+    match iter.next() {
+        None => Unique::Zero,
+        Some(x) => match iter.next() {
+            None => Unique::One(x),
+            Some(_) => Unique::Several,
+        },
     }
 }
 

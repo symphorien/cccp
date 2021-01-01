@@ -1,6 +1,6 @@
 use super::CacheManager;
 use crate::udev::{get_udisk_blockdev_for, underlying_device};
-use crate::utils::FileKind;
+use crate::utils::{looks_parent, FileKind};
 use anyhow::Context;
 use dbus_udisks2::{Block, UDisks2};
 use std::path::Path;
@@ -17,16 +17,6 @@ pub struct UmountCacheManager(Option<Inner>);
 struct Inner {
     udisks: UDisks2,
     fs: Block,
-}
-
-/// returns true if block is synctatically the parent of path.
-fn looks_parent(block: &Block, path: &Path) -> bool {
-    for i in block.mount_points.iter() {
-        if path.starts_with(i) {
-            return true;
-        }
-    }
-    false
 }
 
 impl CacheManager for UmountCacheManager {
