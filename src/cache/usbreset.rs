@@ -3,10 +3,10 @@ use crate::udev::{
     ensure_mounted, get_udisk_blockdev_by_drive_and_size, get_udisk_blockdev_by_uuid,
     get_udisk_blockdev_for, reset_usb_hub, udisk_drives_for, underlying_device, usb_hub_for,
 };
-use crate::utils::{get_mountpoint_in, FileKind, Unique};
+use crate::utils::{change_prefixes, get_mountpoint_in, FileKind, Unique};
 use anyhow::Context;
-use dbus_udisks2::{Block, Drive, UDisks2};
-use std::path::Path;
+use dbus_udisks2::{Drive, UDisks2};
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 use udev::Device;
 
@@ -20,14 +20,13 @@ pub struct UsbResetCacheManager(Option<Inner>);
 enum Identifier {
     /// A block device, by device dbus path and size. Using the size is pretty hacky, sorry
     BlockDevice(String, u64),
-    /// A file system, by uuid
-    Fs(String),
+    /// A file system, by uuid. There is also the mountpoint, but it's only to piggy back the info.
+    Fs(String, PathBuf),
 }
 
 /// the content of UsbResetCacheManager after `permission_check` is called.
 struct Inner {
     udisks: UDisks2,
-    block: Block,
     drives: Vec<Drive>,
     usbhub: Device,
     id: Identifier,
@@ -74,14 +73,16 @@ impl CacheManager for UsbResetCacheManager {
                     dev.syspath().display(),
                     path.display()
                 );
-                anyhow::ensure!(
-                    get_mountpoint_in(&block, path).is_some(),
+                let mountpoint = match get_mountpoint_in(&block, path) {
+                    None => anyhow::bail!(
                     "File system on block device {}, corresponding to sysfs {}, does not looks like it bears {}: mount points {:?}",
                     block.preferred_device.display(),
                     dev.syspath().display(),
                     path.display(),
                     &block.mount_points
-                );
+                ),
+                Some(x) => x.to_path_buf()
+                };
                 let uuid = match block.id_uuid.clone() {
                     None => anyhow::bail!(
                         "Attempting to write to a filesystem {} without uuid",
@@ -99,7 +100,7 @@ impl CacheManager for UsbResetCacheManager {
                             block.path,
                             x.path
                         );
-                        Identifier::Fs(uuid)
+                        Identifier::Fs(uuid, mountpoint)
                     }
                 }
             }
@@ -132,7 +133,6 @@ impl CacheManager for UsbResetCacheManager {
         reset_usb_hub(&usbhub, /* dryrun */true).with_context(|| format!("Cannot access usb device file for {} to issue usbreset ioctl. Missing permissions ?", usbhub.syspath().display()))?;
         self.0 = Some(Inner {
             udisks,
-            block,
             drives,
             usbhub,
             id,
@@ -180,8 +180,8 @@ impl CacheManager for UsbResetCacheManager {
             )
         })?;
         // ensure everything is ready
-        match &inner.id {
-            Identifier::Fs(uuid) => {
+        let new_path = match &inner.id {
+            Identifier::Fs(uuid, mountpoint) => {
                 let mut found = None;
                 for _ in 0..60 {
                     std::thread::sleep(std::time::Duration::from_secs(1));
@@ -205,21 +205,12 @@ impl CacheManager for UsbResetCacheManager {
                 // we need to remount the fs
                 let remounted_path = ensure_mounted(&mut inner.udisks, &block, LONG_TIMEOUT)
                     .with_context(|| format!("Remounting {}", &block.preferred_device.display()))?;
-                anyhow::ensure!(
-                    path.starts_with(&remounted_path),
-                    "File system on block device {} was not remounted on a parent of {} but {}",
-                    inner.block.preferred_device.display(),
-                    path.display(),
-                    remounted_path.display()
-                );
-                std::fs::symlink_metadata(path.parent().expect("tried to unmount /"))
-                    .with_context(|| {
-                        format!(
-                            "checking that the parent of {} still exists after remounting {}",
-                            path.display(),
-                            block.preferred_device.display(),
-                        )
-                    })?;
+                if path.starts_with(&remounted_path) {
+                    None
+                } else {
+                    let mut f = change_prefixes(mountpoint.as_path(), remounted_path.as_path());
+                    Some(f(path))
+                }
             }
             Identifier::BlockDevice(drive, size) => {
                 let mut found = None;
@@ -243,18 +234,23 @@ impl CacheManager for UsbResetCacheManager {
                     None => anyhow::bail!("Timeout reached waiting for block device on drive {} with size {} to appear", drive, size),
                     Some(x) => x
                 };
-                // just check that the device file still exists and points to this device
-                anyhow::ensure!(
-                    block.symlinks.iter().any(|x| x.as_path() == path) || path == block.device,
-                    "{} reappeared at {} and {:?}",
-                    path.display(),
-                    block.device.display(),
-                    block.symlinks
-                );
+                if block.symlinks.iter().any(|x| x.as_path() == path) || path == block.device {
+                    // the current path to the device file is still valid
+                    None
+                } else {
+                    Some(block.device)
+                }
             }
-        }
-        // FIXME: update the fields of inner.
-        Ok(todo!())
+        };
+        inner.udisks.update().context("updating udisks")?;
+        self.permission_check(match &new_path {
+            None => path,
+            Some(x) => x.as_path(),
+        })?;
+        Ok(new_path.map(|new_path| Replacement {
+            before: path.to_path_buf(),
+            after: new_path,
+        }))
     }
 
     fn name(&self) -> &'static str {
