@@ -75,7 +75,8 @@ impl CacheManager for UmountCacheManager {
             let mut f = change_prefixes(inner.mountpoint.as_path(), remounted_path.as_path());
             Some(f(path))
         };
-        inner.udisks.update().context("updating udisks")?;
+        // this refreshes the members and checks that the currently detected mountpoint corresponds
+        // to new_path
         self.permission_check(match &new_path {
             None => path,
             Some(x) => x.as_path(),
