@@ -69,21 +69,21 @@ impl CacheManager for UmountCacheManager {
             .with_context(|| format!("Unmounting {}", inner.fs.preferred_device.display()))?;
         let remounted_path = ensure_mounted(&mut inner.udisks, &inner.fs, LONG_TIMEOUT)
             .with_context(|| format!("Remounting {}", &inner.fs.preferred_device.display()))?;
-        let (res, new_path) = if path.starts_with(&remounted_path) {
-            (None, path.to_path_buf())
+        let new_path = if path.starts_with(&remounted_path) {
+            None
         } else {
             let mut f = change_prefixes(inner.mountpoint.as_path(), remounted_path.as_path());
-            let new_path = f(path);
-            (
-                Some(Replacement {
-                    before: inner.mountpoint.clone(),
-                    after: remounted_path.clone(),
-                }),
-                new_path,
-            )
+            Some(f(path))
         };
-        self.permission_check(new_path.as_path())?;
-        Ok(res)
+        inner.udisks.update().context("updating udisks")?;
+        self.permission_check(match &new_path {
+            None => path,
+            Some(x) => x.as_path(),
+        })?;
+        Ok(new_path.map(|new_path| Replacement {
+            before: path.to_path_buf(),
+            after: new_path,
+        }))
     }
     fn name(&self) -> &'static str {
         "UmountCacheManager"
